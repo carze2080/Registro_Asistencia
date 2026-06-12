@@ -1,0 +1,2989 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Control de Asistencia — RR.HH.</title>
+  <meta name="description" content="Sistema de control de asistencia para RR.HH.">
+  <meta name="theme-color" content="#4f46e5">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Asistencia">
+  <!-- Manifest y SW se inyectan en runtime desde JS (single-file) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+  <!-- ══════════════════════════════════════════════
+       FIREBASE SDK  (compat v9 — funciona sin bundler)
+       ══════════════════════════════════════════════ -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<style>
+/* ═══════════════════════════════════════════════
+   VARIABLES & RESET
+   ═══════════════════════════════════════════════ */
+:root {
+  --bg:        #f0f2f5;
+  --surface:   #ffffff;
+  --surface2:  #f8f9fa;
+  --border:    #e2e8f0;
+  --text:      #1a202c;
+  --text2:     #64748b;
+  --primary:   #4f46e5;
+  --primary-h: #4338ca;
+  --success:   #10b981;
+  --danger:    #ef4444;
+  --warn:      #f59e0b;
+  --accent:    #06b6d4;
+  --sidebar-w: 220px;
+  --radius:    10px;
+  --shadow:    0 1px 3px rgba(0,0,0,.08), 0 4px 12px rgba(0,0,0,.06);
+}
+[data-theme="dark"] {
+  --bg:      #0f172a;
+  --surface: #1e293b;
+  --surface2:#273348;
+  --border:  #334155;
+  --text:    #e2e8f0;
+  --text2:   #94a3b8;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:14px;background:var(--bg);color:var(--text);transition:background .2s,color .2s}
+button{cursor:pointer;font-family:inherit;font-size:inherit}
+input,select,textarea{font-family:inherit;font-size:inherit}
+a{color:var(--primary);text-decoration:none}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:99px}
+
+/* ═══════════════════════════════════════════════
+   LOADER
+   ═══════════════════════════════════════════════ */
+#app-loader{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:9999;transition:opacity .3s}
+#app-loader.hidden{opacity:0;pointer-events:none}
+.spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ═══════════════════════════════════════════════
+   TOAST
+   ═══════════════════════════════════════════════ */
+#toast-container{position:fixed;top:16px;right:16px;z-index:10000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:10px 16px;border-radius:var(--radius);box-shadow:var(--shadow);font-size:13px;max-width:300px;animation:slideIn .25s ease;pointer-events:all;display:flex;align-items:center;gap:8px}
+.toast.success{border-left:3px solid var(--success)}
+.toast.error  {border-left:3px solid var(--danger)}
+.toast.info   {border-left:3px solid var(--primary)}
+@keyframes slideIn{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* ═══════════════════════════════════════════════
+   AUTH
+   ═══════════════════════════════════════════════ */
+
+/* Fondo con gradiente adaptable */
+#auth-screen{
+  display:flex;align-items:center;justify-content:center;
+  min-height:100vh;padding:24px;position:relative;
+  background: linear-gradient(135deg, #1e3a5f 0%, #1a2d4a 50%, #0f1f35 100%);
+  transition: background .3s;
+}
+[data-theme="dark"] #auth-screen{
+  background: linear-gradient(135deg, #0a0f1e 0%, #0d1627 50%, #060c18 100%);
+}
+
+/* Botón de tema flotante en la pantalla de login */
+#auth-theme-btn{
+  position:absolute;top:16px;right:16px;
+  background:rgba(255,255,255,.12);
+  border:1px solid rgba(255,255,255,.2);
+  color:#fff;border-radius:50%;
+  width:40px;height:40px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;cursor:pointer;
+  transition:background .2s,transform .2s;
+  backdrop-filter:blur(8px);
+}
+#auth-theme-btn:hover{background:rgba(255,255,255,.22);transform:scale(1.08)}
+
+/* Tarjeta de login */
+.auth-box{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:36px 32px;
+  width:100%;max-width:420px;
+  box-shadow:0 20px 60px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.15);
+  transition:background .3s, border-color .3s;
+}
+[data-theme="dark"] .auth-box{
+  box-shadow:0 20px 60px rgba(0,0,0,.6), 0 4px 16px rgba(0,0,0,.4);
+}
+
+.auth-brand{text-align:center;margin-bottom:28px}
+.auth-brand .auth-icon-wrap{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:64px;height:64px;border-radius:16px;
+  background:linear-gradient(135deg,var(--primary),#7c3aed);
+  margin-bottom:12px;
+  box-shadow:0 8px 24px rgba(79,70,229,.35);
+}
+.auth-brand .auth-icon-wrap i{font-size:32px;color:#fff}
+.auth-brand h1{font-size:22px;font-weight:700;letter-spacing:-.3px}
+.auth-brand p{color:var(--text2);font-size:13px;margin-top:5px}
+
+/* Inputs mejorados */
+.field input,.field select,.field textarea{
+  background:var(--surface2);
+  border:1.5px solid var(--border);
+  border-radius:10px;
+  padding:10px 12px;
+  transition:border-color .2s, box-shadow .2s;
+}
+.field input:focus,.field select:focus,.field textarea:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(79,70,229,.12);
+}
+
+/* Botón primario con gradiente */
+.btn-primary{
+  background:linear-gradient(135deg,var(--primary),#7c3aed);
+  border:none;
+  box-shadow:0 4px 14px rgba(79,70,229,.3);
+  transition:opacity .2s, transform .1s, box-shadow .2s;
+}
+.btn-primary:hover{
+  opacity:.92;
+  box-shadow:0 6px 20px rgba(79,70,229,.45);
+  transform:translateY(-1px);
+}
+.btn-primary:active{transform:translateY(0)}
+
+.setup-panel{margin-top:20px;padding-top:20px;border-top:1px solid var(--border)}
+.error-text{color:var(--danger);font-size:12px;margin-top:6px;min-height:16px}
+
+/* Toggle tema en topbar — mejorado */
+#btn-theme{
+  position:relative;overflow:visible;
+}
+#btn-theme::after{
+  content:'';position:absolute;inset:-2px;border-radius:10px;
+  border:1.5px solid transparent;transition:border-color .2s;
+}
+#btn-theme:hover::after{border-color:var(--border)}
+
+/* ═══════════════════════════════════════════════
+   LAYOUT
+   ═══════════════════════════════════════════════ */
+#app-layout{display:flex;height:100vh;overflow:hidden}
+#app-layout.hidden{display:none}
+.hidden{display:none!important}
+
+/* ── SIDEBAR ── */
+.sidebar{width:var(--sidebar-w);background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100vh;overflow:hidden;transition:transform .25s,width .25s}
+.sidebar-brand{display:flex;align-items:center;gap:10px;padding:18px 16px;font-weight:700;font-size:16px;color:var(--primary);border-bottom:1px solid var(--border)}
+.sidebar-brand i{font-size:22px}
+.nav{flex:1;overflow-y:auto;padding:8px}
+.nav-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border:none;background:transparent;border-radius:8px;color:var(--text2);transition:background .15s,color .15s;text-align:left}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:var(--primary);color:#fff}
+.nav-item i{font-size:18px;flex-shrink:0}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--border)}
+#user-info{font-size:12px;color:var(--text2);margin-bottom:8px;word-break:break-all}
+
+/* ── MAIN ── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{display:flex;align-items:center;gap:12px;padding:0 16px;height:54px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.topbar h2{flex:1;font-size:16px}
+.topbar-actions{display:flex;align-items:center;gap:8px}
+.icon-btn{border:none;background:transparent;color:var(--text2);font-size:20px;padding:6px;border-radius:8px;display:flex;align-items:center;transition:background .15s}
+.icon-btn:hover{background:var(--surface2)}
+.content{flex:1;overflow-y:auto;padding:20px}
+
+/* ── SYNC BADGE ── */
+.sync-badge{font-size:11px;padding:3px 8px;border-radius:99px;display:flex;align-items:center;gap:4px;font-weight:600}
+.sync-badge.online  {background:#d1fae5;color:#065f46}
+.sync-badge.offline {background:#fee2e2;color:#991b1b}
+.sync-badge.syncing {background:#e0e7ff;color:#3730a3}
+.sync-badge.pending {background:#fef3c7;color:#92400e}
+.sync-badge i{font-size:13px}
+@keyframes rotate{to{transform:rotate(360deg)}}
+.sync-badge.syncing i{animation:rotate .8s linear infinite}
+
+/* ═══════════════════════════════════════════════
+   VIEWS
+   ═══════════════════════════════════════════════ */
+.view{display:none}
+.view.active{display:block}
+
+/* ── CARDS ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-bottom:20px}
+.card-title{font-weight:600;font-size:15px;margin-bottom:14px}
+.hint{color:var(--text2);font-size:12px}
+
+/* ── KPI GRID ── */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px;margin-bottom:20px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;text-align:center;box-shadow:var(--shadow)}
+.kpi.success{border-top:3px solid var(--success)}
+.kpi.danger {border-top:3px solid var(--danger)}
+.kpi.warn   {border-top:3px solid var(--warn)}
+.kpi.accent {border-top:3px solid var(--accent)}
+.kpi-value{font-size:28px;font-weight:700;color:var(--text)}
+.kpi-label{font-size:11px;color:var(--text2);margin-top:2px}
+
+/* ── CHARTS ── */
+.chart-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.chart-card canvas{max-height:220px}
+
+/* ── FORM FIELDS ── */
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px}
+.field input,.field select,.field textarea{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);transition:border .15s}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--primary)}
+
+/* ── BUTTONS ── */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border:none;border-radius:8px;font-weight:600;transition:background .15s,opacity .15s}
+.btn-primary  {background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-h)}
+.btn-secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
+.btn-secondary:hover{background:var(--border)}
+.btn-success  {background:var(--success);color:#fff}
+.btn-danger   {background:var(--danger);color:#fff}
+.btn-sm{padding:5px 10px;font-size:12px}
+.btn-block{width:100%;justify-content:center}
+.btn-group{display:flex;gap:8px;flex-wrap:wrap}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* ── FILTER BAR ── */
+.filter-bar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+.filter-bar input,.filter-bar select{flex:1;min-width:120px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text)}
+
+/* ── TABLE ── */
+.table-wrap{overflow-x:auto}
+.table{width:100%;border-collapse:collapse;font-size:13px}
+.table th{background:var(--surface2);padding:9px 10px;text-align:left;font-weight:600;font-size:11px;text-transform:uppercase;color:var(--text2);border-bottom:1px solid var(--border)}
+.table td{padding:9px 10px;border-bottom:1px solid var(--border);color:var(--text)}
+.table tr:last-child td{border-bottom:none}
+.table tr:hover td{background:var(--surface2)}
+
+/* ── PAGINATION ── */
+.pagination{display:flex;align-items:center;justify-content:space-between;margin-top:12px;flex-wrap:wrap;gap:8px}
+
+/* ── BADGE STATUS ── */
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
+.badge-success{background:#d1fae5;color:#065f46}
+.badge-danger {background:#fee2e2;color:#991b1b}
+.badge-warn   {background:#fef3c7;color:#92400e}
+.badge-info   {background:#e0e7ff;color:#3730a3}
+
+/* ── MARCAJE ── */
+.marcaje-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+#marcaje-status{font-size:13px;color:var(--text2);min-height:18px;margin-top:6px}
+
+/* ── Banner estado empleado seleccionado ── */
+#asist-emp-banner{
+  border-radius:10px;padding:12px 16px;margin-bottom:12px;
+  display:flex;align-items:center;gap:12px;font-size:13px;
+  border:1.5px solid var(--border);background:var(--surface2);
+  transition:background .2s,border-color .2s;
+}
+#asist-emp-banner.sin-registro{background:#fef9ec;border-color:#fcd34d;}
+#asist-emp-banner.con-entrada {background:#ecfdf5;border-color:#6ee7b7;}
+#asist-emp-banner.completo    {background:#eff6ff;border-color:#93c5fd;}
+[data-theme="dark"] #asist-emp-banner.sin-registro{background:rgba(245,158,11,.12);border-color:#92400e}
+[data-theme="dark"] #asist-emp-banner.con-entrada {background:rgba(16,185,129,.12);border-color:#065f46}
+[data-theme="dark"] #asist-emp-banner.completo    {background:rgba(59,130,246,.12);border-color:#1e40af}
+#asist-emp-banner .banner-icon{font-size:24px;flex-shrink:0}
+#asist-emp-banner .banner-text strong{display:block;font-size:14px;margin-bottom:2px}
+
+/* ── EMP FOTO ── */
+.emp-foto-preview{width:80px;height:80px;border-radius:50%;object-fit:cover;margin-top:8px;border:2px solid var(--border)}
+
+/* ══ MODAL ══ */
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;padding:16px}
+.modal.open{display:flex}
+.modal-content{background:var(--surface);border-radius:var(--radius);width:100%;max-width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal-header h3{font-size:15px;font-weight:600}
+.modal-close{background:transparent;border:none;font-size:20px;color:var(--text2);cursor:pointer;padding:4px}
+.modal-content form,.modal-content>div:not(.modal-header){padding:20px}
+
+/* ── AUDIT ── */
+.audit-item{padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;display:flex;gap:10px;align-items:flex-start}
+.audit-item:last-child{border-bottom:none}
+.audit-icon{font-size:18px;color:var(--primary);flex-shrink:0;margin-top:2px}
+.audit-meta{font-size:11px;color:var(--text2);margin-top:2px}
+
+/* ── RESPONSIVE ── */
+@media(max-width:768px){
+  :root{--sidebar-w:0px}
+  .sidebar{position:fixed;left:0;top:0;z-index:500;width:220px;transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0);box-shadow:4px 0 20px rgba(0,0,0,.15)}
+  .content{padding:14px}
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+}
+
+/* ── FIREBASE CONFIG NOTICE ── */
+#firebase-notice{background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 16px;border-radius:var(--radius);margin-bottom:16px;font-size:13px;display:flex;gap:10px;align-items:flex-start}
+#firebase-notice i{font-size:18px;flex-shrink:0;margin-top:1px}
+</style>
+</head>
+<body>
+
+<div id="app-loader"><div class="spinner"></div></div>
+<div id="toast-container"></div>
+
+<!-- AUTH -->
+<div id="auth-screen">
+  <button type="button" id="auth-theme-btn" title="Cambiar tema" aria-label="Cambiar tema">
+    <i class="ti ti-moon" id="auth-theme-icon"></i>
+  </button>
+  <div class="auth-box">
+    <div class="auth-brand">
+      <div class="auth-icon-wrap"><i class="ti ti-clock-hour-4"></i></div>
+      <h1>Control de Asistencia</h1>
+      <p>Gestión de entradas, salidas y reportes</p>
+    </div>
+    <form id="form-login">
+      <div class="field">
+        <label>Usuario o correo</label>
+        <input type="text" id="login-usuario" required autocomplete="username" placeholder="usuario o correo" style="text-transform:lowercase">
+      </div>
+      <div class="field" style="position:relative">
+        <label>Contraseña o código de acceso</label>
+        <input type="password" id="login-pass" required autocomplete="current-password" placeholder="6 dígitos" style="letter-spacing:2px;font-size:16px">
+        <button type="button" id="btn-toggle-pass" style="position:absolute;right:10px;bottom:8px;background:none;border:none;color:var(--text2);cursor:pointer;font-size:16px">
+          <i class="ti ti-eye" id="toggle-pass-icon"></i>
+        </button>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block" style="margin-top:4px"><i class="ti ti-login"></i> Entrar</button>
+      <p id="login-error" class="error-text"></p>
+    </form>
+    <div id="setup-panel" class="setup-panel">
+      <p class="hint" style="margin-bottom:10px"><i class="ti ti-shield-lock"></i> Primera vez: crear administrador</p>
+      <div class="field"><label>Nombre</label><input type="text" id="setup-name" placeholder="Tu nombre completo"></div>
+      <div class="field"><label>Usuario admin</label><input type="text" id="setup-usuario" placeholder="ej. admin" style="text-transform:lowercase"></div>
+      <div class="field"><label>Código de acceso</label><input type="password" id="setup-pass" placeholder="Mínimo 6 caracteres" minlength="6"></div>
+      <button type="button" class="btn btn-primary btn-block" id="btn-setup-admin"><i class="ti ti-user-shield"></i> Crear administrador</button>
+    </div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app-layout" class="hidden">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand"><i class="ti ti-users"></i><span>Asistencia RH</span></div>
+    <nav class="nav">
+      <button type="button" class="nav-item active" data-view="dashboard"  data-title="Dashboard"  data-roles="admin,supervisor,empleado"><i class="ti ti-dashboard"></i> Dashboard</button>
+      <button type="button" class="nav-item"        data-view="empleados"  data-title="Empleados"  data-roles="admin,supervisor"><i class="ti ti-id-badge-2"></i> Empleados</button>
+      <button type="button" class="nav-item"        data-view="asistencia" data-title="Asistencia" data-roles="admin,supervisor,empleado"><i class="ti ti-clock"></i> Asistencia</button>
+      <button type="button" class="nav-item"        data-view="historial"  data-title="Historial"  data-roles="admin,supervisor"><i class="ti ti-history"></i> Historial</button>
+      <button type="button" class="nav-item"        data-view="reportes"   data-title="Reportes"   data-roles="admin,supervisor"><i class="ti ti-file-analytics"></i> Reportes</button>
+      <button type="button" class="nav-item"        data-view="usuarios"   data-title="Usuarios"   data-roles="admin"><i class="ti ti-shield-lock"></i> Usuarios</button>
+      <button type="button" class="nav-item"        data-view="auditoria"  data-title="Auditoría"  data-roles="admin,supervisor"><i class="ti ti-list-check"></i> Auditoría</button>
+      <button type="button" class="nav-item"        data-view="configuracion" data-title="Configuración" data-roles="admin"><i class="ti ti-settings"></i> Configuración</button>
+    </nav>
+    <div class="sidebar-footer">
+      <div id="user-info"></div>
+      <button type="button" class="btn btn-secondary btn-sm btn-block" id="btn-install-pwa" style="display:none" onclick="window._installPWA()"><i class="ti ti-device-mobile-down"></i> Instalar app</button>
+      <button type="button" class="btn btn-secondary btn-sm btn-block" id="btn-logout"><i class="ti ti-logout"></i> Salir</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button type="button" class="icon-btn" id="btn-menu" aria-label="Menú"><i class="ti ti-menu-2"></i></button>
+      <h2 id="page-title">Dashboard</h2>
+      <div class="topbar-actions">
+        <span id="sync-status" class="sync-badge syncing"><i class="ti ti-refresh"></i> Conectando…</span>
+        <button type="button" class="icon-btn" id="btn-theme"><i class="ti ti-moon" id="theme-icon"></i></button>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <!-- DASHBOARD -->
+      <section class="view active" id="view-dashboard">
+        <p class="hint" style="margin-bottom:12px">Resumen del día · <strong id="dash-fecha"></strong></p>
+        <div class="kpi-grid">
+          <div class="kpi success"><div class="kpi-value" id="kpi-presentes">0</div><div class="kpi-label">Presentes</div></div>
+          <div class="kpi danger"> <div class="kpi-value" id="kpi-ausentes">0</div><div class="kpi-label">Ausentes</div></div>
+          <div class="kpi accent"> <div class="kpi-value" id="kpi-entradas">0</div><div class="kpi-label">Entradas hoy</div></div>
+          <div class="kpi accent"> <div class="kpi-value" id="kpi-salidas">0</div><div class="kpi-label">Salidas hoy</div></div>
+          <div class="kpi">        <div class="kpi-value" id="kpi-horas">0</div><div class="kpi-label">Horas hoy</div></div>
+          <div class="kpi">        <div class="kpi-value" id="kpi-total-emp">0</div><div class="kpi-label">Empleados activos</div></div>
+          <div class="kpi warn">   <div class="kpi-value" id="kpi-tardanzas">0</div><div class="kpi-label">Tardanzas</div></div>
+          <div class="kpi">        <div class="kpi-value" id="kpi-extras">0</div><div class="kpi-label">Horas extra</div></div>
+          <div class="kpi accent"> <div class="kpi-value" id="kpi-viat-madrugada">0</div><div class="kpi-label">Viát. Madrugada</div></div>
+          <div class="kpi accent"> <div class="kpi-value" id="kpi-viat-tarde">0</div><div class="kpi-label">Viát. Salida Tarde</div></div>
+          <div class="kpi accent"> <div class="kpi-value" id="kpi-viat-madrugada">0</div><div class="kpi-label">Viát. Madrugada</div></div>
+          <div class="kpi accent"> <div class="kpi-value" id="kpi-viat-tarde">0</div><div class="kpi-label">Viát. Salida Tarde</div></div>
+        </div>
+        <div class="chart-row">
+          <div class="card chart-card"><div class="card-title">Asistencia por departamento</div><canvas id="chart-asistencia-depto"></canvas></div>
+          <div class="card chart-card"><div class="card-title">Estados del día</div><canvas id="chart-estados"></canvas></div>
+          <div class="card chart-card"><div class="card-title">Distribución de horas</div><canvas id="chart-horas"></canvas></div>
+        </div>
+      </section>
+
+      <!-- EMPLEADOS -->
+      <section class="view" id="view-empleados">
+        <div class="card">
+          <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;margin-bottom:12px">
+            <div class="filter-bar" style="flex:1;margin:0">
+              <input type="search" id="emp-search" placeholder="Buscar código, nombre, cargo…">
+              <select id="filt-dept-emp"><option value="">Departamento</option></select>
+              <select id="filt-estado-emp">
+                <option value="activo">Activos</option>
+                <option value="inactivo">Inactivos</option>
+                <option value="todos">Todos</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-primary" id="btn-nuevo-empleado"><i class="ti ti-plus"></i> Nuevo</button>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Código</th><th>Nombre</th><th>Cargo</th><th>Depto</th><th>Tel</th><th>Estado</th><th></th></tr></thead>
+              <tbody id="empleados-tbody"></tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <span id="empleados-count">0 empleados</span>
+            <div class="btn-group">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-emp-prev">Anterior</button>
+              <span id="emp-page-info"></span>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-emp-next">Siguiente</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ASISTENCIA -->
+      <section class="view" id="view-asistencia">
+        <!-- Tarjeta de bienvenida empleado (solo visible con rol empleado) -->
+        <div id="emp-greeting" class="card" style="display:none;margin-bottom:16px;border-left:3px solid var(--primary)"></div>
+        <div class="card">
+          <div class="card-title">Marcaje</div>
+          <div class="field"><label>Empleado</label><select id="asist-empleado"><option value="">Seleccionar…</option></select></div>
+          <!-- Banner de estado del empleado seleccionado -->
+          <div id="asist-emp-banner" style="display:none"></div>
+          <div class="marcaje-actions">
+            <button type="button" class="btn btn-success btn-block" id="btn-entrada"><i class="ti ti-login"></i> Marcar entrada</button>
+            <button type="button" class="btn btn-danger  btn-block" id="btn-salida"><i class="ti ti-logout"></i> Marcar salida</button>
+          </div>
+          <div class="field"><label>Observaciones</label><textarea id="asist-obs" rows="2" placeholder="Opcional"></textarea></div>
+          <div id="marcaje-status"></div>
+          <div class="btn-group" style="margin-top:12px">
+            <button type="button" class="btn btn-secondary" id="btn-scan-qr"><i class="ti ti-qrcode"></i> Escanear QR</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Registros de hoy</div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Código</th><th>Nombre</th><th>Entrada</th><th>Salida</th><th>Horas</th><th>Estado</th></tr></thead>
+              <tbody id="asistencia-hoy-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- HISTORIAL -->
+      <section class="view" id="view-historial">
+        <div class="card">
+          <div class="filter-bar">
+            <div class="field" style="margin:0"><label>Desde</label><input type="date" id="hist-desde"></div>
+            <div class="field" style="margin:0"><label>Hasta</label><input type="date" id="hist-hasta"></div>
+            <div class="field" style="margin:0"><label>Empleado</label><select id="hist-empleado"><option value="">Todos</option></select></div>
+            <div class="field" style="margin:0"><label>Departamento</label><select id="hist-depto"><option value="">Todos</option></select></div>
+            <button type="button" class="btn btn-primary" id="btn-buscar-historial" style="align-self:end"><i class="ti ti-search"></i> Buscar</button>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Fecha</th><th>Código</th><th>Nombre</th><th>Depto</th><th>Entrada</th><th>Salida</th><th>Horas</th><th>H.Extra</th><th>Viáticos</th><th>Ubicación</th><th>Estado</th></tr></thead>
+              <tbody id="historial-tbody"></tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <span id="hist-count">0 registros</span>
+            <div class="btn-group">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-hist-prev">Anterior</button>
+              <span id="hist-page-info"></span>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-hist-next">Siguiente</button>
+            </div>
+          </div>
+          <div class="btn-group" style="margin-top:12px" id="hist-export-btns">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-hist-csv"><i class="ti ti-download"></i> CSV</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-hist-xlsx"><i class="ti ti-file-spreadsheet"></i> Excel</button>
+            <button type="button" class="btn btn-primary btn-sm"   id="btn-hist-pdf"><i class="ti ti-file-type-pdf"></i> PDF</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- REPORTES -->
+      <section class="view" id="view-reportes">
+
+        <!-- Asistencia general -->
+        <div class="card">
+          <div class="card-title"><i class="ti ti-clipboard-list" style="color:var(--primary)"></i> Reporte de Asistencia</div>
+          <div class="filter-bar">
+            <div class="field" style="margin:0"><label>Periodo</label>
+              <select id="rep-tipo">
+                <option value="diario">Diario</option>
+                <option value="semanal" selected>Semanal</option>
+                <option value="mensual">Mensual</option>
+              </select>
+            </div>
+            <div class="field" style="margin:0"><label>Empleado</label><select id="rep-empleado"><option value="">Todos</option></select></div>
+            <div class="field" style="margin:0"><label>Departamento</label><select id="rep-depto"><option value="">Todos</option></select></div>
+          </div>
+          <div class="btn-group">
+            <button type="button" class="btn btn-secondary" id="btn-rep-csv"><i class="ti ti-download"></i> CSV</button>
+            <button type="button" class="btn btn-secondary" id="btn-rep-xlsx"><i class="ti ti-file-spreadsheet"></i> Excel</button>
+            <button type="button" class="btn btn-primary"   id="btn-rep-pdf"><i class="ti ti-file-type-pdf"></i> PDF</button>
+          </div>
+        </div>
+
+        <!-- Viáticos -->
+        <div class="card">
+          <div class="card-title"><i class="ti ti-cash" style="color:var(--success)"></i> Reporte de Viáticos Diarios</div>
+          <p class="hint" style="margin-bottom:12px">
+            Registra automáticamente viáticos por <strong>madrugada</strong> (entrada 06:30–07:15, Lun–Vie)
+            y por <strong>salida tarde</strong> (después de las 18:30 Lun–Jue / 17:30 Vie).
+          </p>
+          <div class="filter-bar">
+            <div class="field" style="margin:0"><label>Desde</label><input type="date" id="viat-desde"></div>
+            <div class="field" style="margin:0"><label>Hasta</label><input type="date" id="viat-hasta"></div>
+            <div class="field" style="margin:0"><label>Empleado</label><select id="viat-empleado"><option value="">Todos</option></select></div>
+            <div class="field" style="margin:0"><label>Tipo viático</label>
+              <select id="viat-tipo-filtro">
+                <option value="">Todos</option>
+                <option value="madrugada">Madrugada</option>
+                <option value="tarde">Salida tarde</option>
+                <option value="ambos">Ambos en el mismo día</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-primary" id="btn-buscar-viaticos" style="align-self:end"><i class="ti ti-search"></i> Buscar</button>
+          </div>
+
+          <!-- Resumen KPI viáticos -->
+          <div class="kpi-grid" id="viat-kpi-row" style="margin-bottom:14px;display:none">
+            <div class="kpi accent"><div class="kpi-value" id="viat-kpi-total">0</div><div class="kpi-label">Total viáticos</div></div>
+            <div class="kpi accent"><div class="kpi-value" id="viat-kpi-madrugada">0</div><div class="kpi-label">Madrugada</div></div>
+            <div class="kpi accent"><div class="kpi-value" id="viat-kpi-tarde">0</div><div class="kpi-label">Salida tarde</div></div>
+            <div class="kpi warn"> <div class="kpi-value" id="viat-kpi-personas">0</div><div class="kpi-label">Personas</div></div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Fecha</th><th>Código</th><th>Nombre</th><th>Departamento</th><th>Entrada</th><th>Salida</th><th>H.Extra</th><th>Viát. Madrugada</th><th>Viát. Salida Tarde</th></tr></thead>
+              <tbody id="viaticos-tbody"></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="viat-pagination" style="display:none">
+            <span id="viat-count">0 registros</span>
+            <div class="btn-group">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-viat-prev">Anterior</button>
+              <span id="viat-page-info"></span>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-viat-next">Siguiente</button>
+            </div>
+          </div>
+          <div class="btn-group" style="margin-top:12px" id="viat-export-btns" style="display:none">
+            <button type="button" class="btn btn-secondary" id="btn-viat-csv"><i class="ti ti-download"></i> CSV Viáticos</button>
+            <button type="button" class="btn btn-secondary" id="btn-viat-xlsx"><i class="ti ti-file-spreadsheet"></i> Excel Viáticos</button>
+            <button type="button" class="btn btn-primary"   id="btn-viat-pdf"><i class="ti ti-file-type-pdf"></i> PDF Viáticos</button>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- USUARIOS -->
+      <section class="view" id="view-usuarios">
+
+        <!-- Crear acceso empleado -->
+        <div class="card">
+          <div class="card-title"><i class="ti ti-user-plus" style="color:var(--primary)"></i> Generar acceso para empleado</div>
+          <p class="hint" style="margin-bottom:14px">
+            Selecciona un empleado y la app genera automáticamente su <strong>usuario</strong> y <strong>código de acceso</strong>.
+          </p>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:14px">
+            <div class="field" style="margin:0"><label>Empleado *</label>
+              <select id="usr-empleado-sel"><option value="">Seleccionar empleado…</option></select>
+            </div>
+            <div class="field" style="margin:0"><label>Rol</label>
+              <select id="usr-rol">
+                <option value="empleado">Empleado — solo su asistencia</option>
+                <option value="supervisor">Supervisor — ver todos</option>
+                <option value="admin">Administrador</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Preview generado -->
+          <div id="usr-preview" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px">
+            <p style="font-size:12px;color:var(--text2);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Credenciales generadas</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div>
+                <p style="font-size:11px;color:var(--text2)">Usuario</p>
+                <p id="usr-preview-usuario" style="font-size:18px;font-weight:700;color:var(--primary);letter-spacing:1px"></p>
+              </div>
+              <div>
+                <p style="font-size:11px;color:var(--text2)">Código de acceso</p>
+                <p id="usr-preview-codigo" style="font-size:24px;font-weight:700;color:var(--primary);letter-spacing:4px"></p>
+              </div>
+            </div>
+            <div style="margin-top:8px;padding:8px;background:var(--warn);background:rgba(245,158,11,.1);border-radius:6px;font-size:12px;color:#92400e">
+              <i class="ti ti-alert-triangle"></i> Anota o comunica estas credenciales al empleado antes de guardar. El código no se puede recuperar después.
+            </div>
+          </div>
+
+          <div class="btn-group">
+            <button type="button" class="btn btn-secondary" id="btn-preview-usuario">
+              <i class="ti ti-refresh"></i> Generar credenciales
+            </button>
+            <button type="button" class="btn btn-primary" id="btn-crear-usuario" disabled>
+              <i class="ti ti-user-check"></i> Guardar acceso
+            </button>
+          </div>
+          <p id="usr-msg" style="margin-top:8px;font-size:13px;min-height:18px"></p>
+        </div>
+
+        <!-- Lista de usuarios -->
+        <div class="card">
+          <div class="card-title"><i class="ti ti-users" style="color:var(--primary)"></i> Usuarios registrados</div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Empleado vinculado</th><th>Estado</th><th></th></tr></thead>
+              <tbody id="usuarios-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Instrucciones -->
+        <div class="card" style="border-left:3px solid var(--primary)">
+          <div class="card-title"><i class="ti ti-help-circle" style="color:var(--primary)"></i> ¿Cómo accede el empleado?</div>
+          <div style="font-size:13px;line-height:2;color:var(--text2)">
+            <p><i class="ti ti-circle-number-1" style="color:var(--primary)"></i>&nbsp; El empleado abre la app en su celular o computadora</p>
+            <p><i class="ti ti-circle-number-2" style="color:var(--primary)"></i>&nbsp; Ingresa su <strong>usuario</strong> (ej. <code>jperez</code>) y su <strong>código de 6 dígitos</strong></p>
+            <p><i class="ti ti-circle-number-3" style="color:var(--primary)"></i>&nbsp; Verá la pantalla de <strong>Asistencia</strong> directo con su nombre</p>
+            <p><i class="ti ti-circle-number-4" style="color:var(--primary)"></i>&nbsp; Solo puede marcar <strong>su propia asistencia</strong></p>
+            <p style="margin-top:10px;padding:10px;background:var(--surface2);border-radius:8px">
+              <i class="ti ti-info-circle" style="color:var(--warn)"></i>&nbsp;
+              <strong>Tip:</strong> El empleado puede guardar la URL como acceso directo en su celular para entrar rápido cada día.
+            </p>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- AUDITORÍA -->
+      <section class="view" id="view-auditoria">
+        <div class="card">
+          <div class="card-title">Auditoría de cambios</div>
+          <div id="audit-list"></div>
+        </div>
+      </section>
+
+      <!-- CONFIGURACIÓN FIREBASE -->
+      <section class="view" id="view-configuracion">
+        <div class="card">
+          <div class="card-title"><i class="ti ti-brand-firebase" style="color:#f57c00"></i> Configuración de Firebase</div>
+          <div id="firebase-notice">
+            <i class="ti ti-info-circle"></i>
+            <div>
+              <strong>¿Cómo obtengo estos datos?</strong><br>
+              Ve a <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> →
+              tu proyecto → Configuración del proyecto → "Tu app" → Config del SDK web. 
+              Pega cada valor aquí y presiona <strong>Guardar y conectar</strong>.
+            </div>
+          </div>
+          <div class="field"><label>API Key</label><input type="text" id="fb-apiKey" placeholder="AIzaSy…"></div>
+          <div class="field"><label>Auth Domain</label><input type="text" id="fb-authDomain" placeholder="mi-proyecto.firebaseapp.com"></div>
+          <div class="field"><label>Project ID</label><input type="text" id="fb-projectId" placeholder="mi-proyecto"></div>
+          <div class="field"><label>Storage Bucket</label><input type="text" id="fb-storageBucket" placeholder="mi-proyecto.appspot.com"></div>
+          <div class="field"><label>Messaging Sender ID</label><input type="text" id="fb-messagingSenderId" placeholder="123456789"></div>
+          <div class="field"><label>App ID</label><input type="text" id="fb-appId" placeholder="1:123456789:web:abc…"></div>
+          <div class="btn-group">
+            <button type="button" class="btn btn-primary" id="btn-save-firebase"><i class="ti ti-device-floppy"></i> Guardar y conectar</button>
+            <button type="button" class="btn btn-secondary" id="btn-test-firebase"><i class="ti ti-plug"></i> Probar conexión</button>
+            <button type="button" class="btn btn-secondary" id="btn-clear-firebase" style="color:var(--danger)"><i class="ti ti-trash"></i> Limpiar</button>
+          </div>
+          <p id="fb-status" style="margin-top:12px;font-size:13px;color:var(--text2)"></p>
+        </div>
+        <div class="card">
+          <div class="card-title">Estado del almacenamiento</div>
+          <div id="storage-status-detail" style="font-size:13px;line-height:1.8;color:var(--text2)"></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- Modal empleado -->
+<div class="modal" id="modal-empleado">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="modal-emp-title">Empleado</h3>
+      <button type="button" class="modal-close"><i class="ti ti-x"></i></button>
+    </div>
+    <form id="form-empleado">
+      <input type="hidden" id="emp-id">
+      <input type="hidden" id="emp-foto-data">
+      <div class="field"><label>Código *</label><input type="text" id="emp-codigo" required></div>
+      <div class="field"><label>Nombre completo *</label><input type="text" id="emp-nombre" required></div>
+      <div class="field"><label>Cargo</label><input type="text" id="emp-cargo"></div>
+      <div class="field"><label>Departamento</label><input type="text" id="emp-depto"></div>
+      <div class="field"><label>Teléfono</label><input type="tel" id="emp-tel"></div>
+      <div class="field"><label>Correo</label><input type="email" id="emp-correo"></div>
+      <div class="field"><label>Fecha ingreso</label><input type="date" id="emp-ingreso"></div>
+      <div class="field"><label>Estado</label>
+        <select id="emp-estado"><option value="activo">Activo</option><option value="inactivo">Inactivo</option></select>
+      </div>
+      <div class="field"><label>Fotografía</label><input type="file" id="emp-foto" accept="image/*">
+        <img id="emp-foto-preview" class="emp-foto-preview hidden" alt="">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Guardar</button>
+    </form>
+  </div>
+</div>
+
+<!-- Modal QR -->
+<div class="modal" id="modal-qr">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Escanear código QR</h3>
+      <button type="button" class="modal-close" id="btn-close-qr"><i class="ti ti-x"></i></button>
+    </div>
+    <div style="padding:20px">
+      <div class="field"><label>Acción</label>
+        <select id="qr-tipo"><option value="entrada">Entrada</option><option value="salida">Salida</option></select>
+      </div>
+      <div id="qr-reader"></div>
+      <p class="hint" style="margin:12px 0">O ingresa el código manualmente:</p>
+      <div class="field" style="display:flex;gap:8px">
+        <input type="text" id="qr-manual-codigo" placeholder="Código empleado">
+        <button type="button" class="btn btn-primary" id="btn-qr-manual">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     JAVASCRIPT — todo en un solo bloque
+     ═══════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 1 · FIREBASE MANAGER
+   Gestiona la inicialización y reintento de Firebase
+   según la config guardada en localStorage.
+   ────────────────────────────────────────────── */
+const FB = (() => {
+  let app = null, db = null, initialized = false;
+
+  function loadConfig() {
+    try { return JSON.parse(localStorage.getItem('fb_config') || 'null'); } catch { return null; }
+  }
+  function saveConfig(cfg) { localStorage.setItem('fb_config', JSON.stringify(cfg)); }
+  function clearConfig()   { localStorage.removeItem('fb_config'); }
+
+  async function init(cfg) {
+    cfg = cfg || loadConfig();
+    if (!cfg || !cfg.apiKey) return false;
+    try {
+      try { app = firebase.app(); } catch { app = null; }
+      if (!app || app.options.projectId !== cfg.projectId) {
+        try { if (app) await app.delete(); } catch {}
+        app = firebase.initializeApp(cfg);
+      }
+      db = firebase.firestore();
+      // Marcar como inicializado de inmediato (sin bloquear con ping)
+      initialized = true;
+      saveConfig(cfg);
+      // Verificar conectividad en segundo plano
+      setTimeout(async () => {
+        try {
+          await db.collection('_ping').doc('test').set({ t: Date.now() });
+          updateSyncBadge('online');
+          console.log('Firestore conectado OK');
+        } catch(e) {
+          initialized = false;
+          updateSyncBadge('offline');
+          console.warn('Firestore sin conexión, modo local:', e.message);
+        }
+      }, 500);
+      return true;
+    } catch(e) {
+      console.warn('Firebase SDK init error:', e.message);
+      initialized = false;
+      return false;
+    }
+  }
+
+  async function testConnection() {
+    if (!db) return false;
+    try {
+      await db.collection('_ping').doc('test').set({ t: Date.now() });
+      return true;
+    } catch { return false; }
+  }
+
+  return { init, testConnection, loadConfig, saveConfig, clearConfig,
+    get db()  { return db;   },
+    get ok()  { return initialized && !!db; }
+  };
+})();
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 2 · STORAGE LAYER (híbrido + cola offline)
+   ─────────────────────────────────────────────
+   • Escribe en localStorage SIEMPRE (fuente de verdad local).
+   • Si Firebase está activo, sincroniza en paralelo.
+   • Si Firebase falla o no hay red, encola la op en
+     'rrhh_offline_queue' y reintenta automáticamente
+     cuando el navegador detecta reconexión.
+   ────────────────────────────────────────────── */
+const Store = (() => {
+  const PREFIX    = 'rrhh_';
+  const QUEUE_KEY = 'rrhh_offline_queue';
+  const CACHE_TTL = 60000; // ms
+  const _cache    = {};    // { col: { data, ts } }
+
+  /* ── helpers localStorage ── */
+  const lsKey    = col => PREFIX + col;
+  const lsGetAll = col => { try { return JSON.parse(localStorage.getItem(lsKey(col)) || '[]'); } catch { return []; } };
+  const lsSetAll = (col, arr) => localStorage.setItem(lsKey(col), JSON.stringify(arr));
+  const invalidateCache = col => { delete _cache[col]; };
+
+  /* ── Cola offline ── */
+  function qLoad()        { try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); } catch { return []; } }
+  function qSave(q)       { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); _refreshQueueBadge(); }
+  function qPush(op)      { const q = qLoad(); q.push({ ...op, _ts: Date.now() }); qSave(q); }
+  function qSize()        { return qLoad().length; }
+
+  function _refreshQueueBadge() {
+    const n = qSize();
+    const el = document.getElementById('sync-status');
+    if (!el) return;
+    if (n > 0 && !navigator.onLine) {
+      el.className = 'sync-badge offline';
+      el.innerHTML = `<i class="ti ti-cloud-off"></i> Offline (${n} pendiente${n>1?'s':''})`;
+    }
+  }
+
+  /* ── Drena la cola: intenta enviar cada op pendiente ── */
+  async function flushQueue() {
+    if (!FB.ok) return;
+    const q = qLoad();
+    if (!q.length) return;
+
+    updateSyncBadge('syncing');
+    const failed = [];
+    for (const op of q) {
+      try {
+        if (op.type === 'set') {
+          await FB.db.collection(op.col).doc(op.id).set(op.data);
+        } else if (op.type === 'delete') {
+          await FB.db.collection(op.col).doc(op.id).delete();
+        }
+      } catch(e) {
+        console.warn('flushQueue op failed, re-enqueue:', e.message);
+        failed.push(op);
+      }
+    }
+    qSave(failed);
+    updateSyncBadge(failed.length ? 'pending' : 'online');
+    if (!failed.length) toast('Sincronización completa — todos los registros enviados a Firebase', 'success');
+  }
+
+  /* ── getAll con caché ── */
+  async function getAll(col) {
+    const cached = _cache[col];
+    if (cached && (Date.now() - cached.ts) < CACHE_TTL) return cached.data;
+
+    if (FB.ok) {
+      try {
+        const snap = await FB.db.collection(col).get();
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        lsSetAll(col, docs);
+        _cache[col] = { data: docs, ts: Date.now() };
+        return docs;
+      } catch(e) { console.warn('FB getAll fallback a local:', e.message); }
+    }
+    const local = lsGetAll(col);
+    _cache[col] = { data: local, ts: Date.now() };
+    return local;
+  }
+
+  /* ── save: local + Firebase o encola ── */
+  async function save(col, obj) {
+    if (!obj.id) obj.id = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    // Local siempre
+    const arr = lsGetAll(col);
+    const idx = arr.findIndex(x => x.id === obj.id);
+    if (idx >= 0) arr[idx] = obj; else arr.push(obj);
+    lsSetAll(col, arr);
+    invalidateCache(col);
+    // Firebase o cola
+    if (FB.ok) {
+      try {
+        await FB.db.collection(col).doc(obj.id).set(obj);
+      } catch(e) {
+        console.warn('FB save falló, encolando:', e.message);
+        qPush({ type:'set', col, id: obj.id, data: obj });
+        updateSyncBadge('pending');
+      }
+    } else {
+      qPush({ type:'set', col, id: obj.id, data: obj });
+      updateSyncBadge('pending');
+    }
+    return obj;
+  }
+
+  /* ── remove: local + Firebase o encola ── */
+  async function remove(col, id) {
+    const arr = lsGetAll(col).filter(x => x.id !== id);
+    lsSetAll(col, arr);
+    invalidateCache(col);
+    if (FB.ok) {
+      try {
+        await FB.db.collection(col).doc(id).delete();
+      } catch(e) {
+        console.warn('FB delete falló, encolando:', e.message);
+        qPush({ type:'delete', col, id });
+        updateSyncBadge('pending');
+      }
+    } else {
+      qPush({ type:'delete', col, id });
+      updateSyncBadge('pending');
+    }
+  }
+
+  /* ── getById: Firestore directo si disponible ── */
+  async function getById(col, id) {
+    if (FB.ok) {
+      try {
+        const snap = await FB.db.collection(col).doc(id).get();
+        if (snap.exists) return { id: snap.id, ...snap.data() };
+      } catch(e) { console.warn('FB getById fallback:', e.message); }
+    }
+    return lsGetAll(col).find(x => x.id === id) || null;
+  }
+
+  return { getAll, save, remove, getById, lsGetAll, lsSetAll, invalidateCache, flushQueue, qSize };
+})();
+
+/* ──────────────────────────────────────────────
+   SHA-256 seguro usando Web Crypto API
+   ────────────────────────────────────────────── */
+async function hashCodigo(codigo) {
+  const encoder = new TextEncoder();
+  const data    = encoder.encode(String(codigo));
+  const hashBuf = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 3 · AUTH LOCAL (fallback cuando Firebase no está configurado)
+   ────────────────────────────────────────────── */
+const LocalAuth = (() => {
+  const KEY         = 'rrhh_users';
+  const SESSION_KEY = 'rrhh_session';
+
+  function getUsers()    { try{ return JSON.parse(localStorage.getItem(KEY)||'[]'); }catch{ return []; } }
+  function saveUsers(u)  { localStorage.setItem(KEY, JSON.stringify(u)); }
+  function currentSession() { try{ return JSON.parse(sessionStorage.getItem(SESSION_KEY)||'null'); }catch{ return null; } }
+  function setSession(u) { sessionStorage.setItem(SESSION_KEY, JSON.stringify(u)); }
+  function clearSession(){ sessionStorage.removeItem(SESSION_KEY); }
+
+  // Genera usuario desde nombre: "Juan Pérez García" → "jperez"
+  function generarUsuario(nombre) {
+    const partes = nombre.normalize('NFD').replace(/[̀-ͯ]/g,'')
+                         .toLowerCase().replace(/[^a-z\s]/g,'').trim().split(/\s+/);
+    const inicial   = partes[0]?.[0] || '';
+    const apellido  = partes[1] || partes[0] || 'user';
+    let base = inicial + apellido.slice(0,8);
+    // Si ya existe, agregar número
+    const users = getUsers();
+    let candidate = base, n = 2;
+    while (users.find(u => u.usuario === candidate)) candidate = base + n++;
+    return candidate;
+  }
+
+  // Genera código numérico de 6 dígitos
+  function generarCodigo() {
+    return String(Math.floor(100000 + Math.random() * 900000));
+  }
+
+  async function createUser(name, usuario, codigo, role='admin', empleadoId=null) {
+    const users = getUsers();
+    if (users.find(u => u.usuario === usuario)) throw new Error('El usuario ya existe');
+    const hash = await hashCodigo(codigo);
+    const u = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      name, usuario,
+      pass: hash,   // SHA-256 hex
+      role, estado:'activo', empleadoId
+    };
+    users.push(u);
+    saveUsers(users);
+    return u;
+  }
+
+  async function login(usuario, codigo) {
+    const users = getUsers();
+    const key   = usuario.toLowerCase().trim();
+    const hash  = await hashCodigo(codigo);
+    const btoaVal = btoa(codigo);
+    // Buscar por campo "usuario" (nuevo formato) O por "email" (formato antiguo)
+    // Acepta SHA-256 (nuevo) O btoa (legacy)
+    const u = users.find(x =>
+      x.estado === 'activo' &&
+      (x.pass === hash || x.pass === btoaVal) &&
+      (
+        (x.usuario && x.usuario === key) ||
+        (x.email   && x.email   === key)
+      )
+    );
+    if (!u) throw new Error('Usuario o código incorrecto');
+    // ── Migración automática btoa → SHA-256 en localStorage ──
+    if (u.pass === btoaVal && u.pass !== hash) {
+      u.pass = hash;
+      const users2 = getUsers();
+      const idx = users2.findIndex(x => x.id === u.id);
+      if (idx >= 0) { users2[idx].pass = hash; saveUsers(users2); }
+    }
+    setSession(u);
+    return u;
+  }
+
+  function logout()     { clearSession(); }
+  function hasAdmins()  { return getUsers().some(u => u.role==='admin'); }
+
+  return {
+    currentSession, setSession, clearSession,
+    createUser, login, logout, hasAdmins,
+    getUsers, saveUsers, generarUsuario, generarCodigo
+  };
+})();
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 3.5 · LOGIN POR USUARIO + CÓDIGO
+   Busca en Firestore o localStorage según disponibilidad
+   ────────────────────────────────────────────── */
+async function loginUsuarioCodigo(usuario, codigo) {
+  const key     = usuario.toLowerCase().trim();
+  const hash    = await hashCodigo(codigo);
+  const btoaVal = btoa(codigo);
+
+  // 1. Intentar en Firestore (busca por 'usuario' o 'email')
+  if (FB.ok && FB.db) {
+    try {
+      // Buscar por campo usuario (nuevo)
+      let snap = await FB.db.collection('usuarios')
+        .where('usuario', '==', key)
+        .where('estado',  '==', 'activo')
+        .get();
+
+      // Si no encuentra, intentar por email (formato antiguo)
+      if (snap.empty) {
+        snap = await FB.db.collection('usuarios')
+          .where('email',  '==', key)
+          .where('estado', '==', 'activo')
+          .get();
+      }
+
+      if (!snap.empty) {
+        const doc  = snap.docs[0];
+        const data = doc.data();
+        // Verificar: SHA-256 (nuevo), codigoHash/btoa (legacy), pass/btoa (legacy)
+        const storedHash = data.codigoHash || data.pass;
+        const hashOk = storedHash === hash || storedHash === btoaVal;
+        if (hashOk) {
+          const u = { id: doc.id, ...data };
+          // ── Migración automática btoa → SHA-256 ──
+          if (storedHash === btoaVal && storedHash !== hash) {
+            try {
+              await FB.db.collection('usuarios').doc(doc.id).update({ codigoHash: hash, pass: hash });
+              // También actualizar en localStorage
+              const lusers = LocalAuth.getUsers();
+              const lu = lusers.find(x => x.id === doc.id);
+              if (lu) { lu.pass = hash; lu.codigoHash = hash; LocalAuth.saveUsers(lusers); }
+            } catch(me) { console.warn('Migración hash omitida:', me); }
+          }
+          LocalAuth.setSession(u);
+          return u;
+        } else {
+          throw new Error('Usuario o código incorrecto');
+        }
+      }
+    } catch(e) {
+      if (e.message === 'Usuario o código incorrecto') throw e;
+      console.warn('Firestore login fallback:', e);
+    }
+  }
+
+  // 2. Fallback a localStorage (acepta usuario, email, y pass antigua)
+  return LocalAuth.login(key, codigo);
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 4 · ESTADO GLOBAL
+   ────────────────────────────────────────────── */
+let currentUser  = null;    // usuario activo
+
+/* ──────────────────────────────────────────────
+   SEED INICIAL — colaboradores precargados
+   Solo se ejecuta una vez (si no hay datos)
+   ────────────────────────────────────────────── */
+function seedInicial() {
+  const KEY_DONE = 'rrhh_seed_v4';
+  if (localStorage.getItem(KEY_DONE)) return;
+  const fbOk = false; // solo local en este paso síncrono
+  (async () => { await seedInicialConFirebase(false); })();
+}
+
+async function seedInicialConFirebase(fbOk) {
+  const KEY_DONE = 'rrhh_seed_v4';
+  if (localStorage.getItem(KEY_DONE)) return;
+
+  const empleados = [{"id": "emp001", "codigo": "A001", "nombre": "CARLOS DAVID VASQUEZ ZEPEDA", "cargo": "JEFE DE BODEGA Y LOGISTICA", "depto": "ADMINISTRACION", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp002", "codigo": "L002", "nombre": "EDWIN ALEXANDER RAMIREZ HERNANDEZ", "cargo": "MOTORISTA", "depto": "LOGISTICA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp003", "codigo": "L003", "nombre": "JAIME ERNESTO FLORES ESPINOZA", "cargo": "AUXILIAR DE REPARTO", "depto": "LOGISTICA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp004", "codigo": "L004", "nombre": "JOSE LUIS MAZARIEGO LEMUS", "cargo": "MOTORISTA", "depto": "LOGISTICA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp005", "codigo": "B005", "nombre": "ROBERTO ESCOBAR RODAS", "cargo": "JEFE DE BODEGA", "depto": "BODEGA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp006", "codigo": "L006", "nombre": "TULIO OSMIN CORTEZ", "cargo": "MOTORISTA", "depto": "LOGISTICA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp007", "codigo": "B007", "nombre": "CRISTIAN MISAEL PEREZ LOPEZ", "cargo": "AUXILIAR DE BODEGA", "depto": "BODEGA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp008", "codigo": "L008", "nombre": "HECTOR VLADIMIR OLMEDO FLORES", "cargo": "AUXILIAR DE REPARTO", "depto": "LOGISTICA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp009", "codigo": "L009", "nombre": "JOSUE EDUARDO RAMIREZ MENDOZA", "cargo": "AUXILIAR DE REPARTO", "depto": "LOGISTICA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp010", "codigo": "A010", "nombre": "CARLOS ERNESTO LOPEZ PEREZ", "cargo": "AUDITOR DE BODEGA", "depto": "ADMINISTRACION", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp011", "codigo": "L011", "nombre": "CARLOS ALBERTO CONTRERAS MOLINA", "cargo": "AUXILIAR DE REPARTO", "depto": "LOGISTICA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp012", "codigo": "L012", "nombre": "GERBER EDUARDO MELARA SANCHEZ", "cargo": "MOTORISTA", "depto": "LOGISTICA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}, {"id": "emp013", "codigo": "B013", "nombre": "MOISES IVAN CUBAS", "cargo": "AUXILIAR DE BODEGA", "depto": "BODEGA", "estado": "activo", "tel": "", "correo": "", "ingreso": "2025-01-01", "foto": ""}];
+  const usuarios  = [{"id": "usr001", "name": "CARLOS DAVID VASQUEZ ZEPEDA", "usuario": "cdavid", "codigoHash": "NzcwNDg3", "pass": "NzcwNDg3", "role": "admin", "estado": "activo", "empleadoId": "emp001"}];
+
+  // Guardar empleados
+  const empExist = Store.lsGetAll('empleados');
+  if (!empExist.length) Store.lsSetAll('empleados', empleados);
+
+  // Guardar usuarios: conservar solo admins existentes + los del seed
+  const usrExist   = LocalAuth.getUsers();
+  const soloAdmins = usrExist.filter(u => u.role === 'admin');
+  const merged     = [...soloAdmins];
+  usuarios.forEach(u => { if (!merged.find(x => x.usuario === u.usuario)) merged.push(u); });
+  LocalAuth.saveUsers(merged);
+
+  // Sincronizar a Firestore si está conectado
+  if (fbOk && FB.db) {
+    try {
+      const batch = FB.db.batch();
+      empleados.forEach(e => {
+        batch.set(FB.db.collection('empleados').doc(e.id), e);
+      });
+      // Eliminar usuarios que no sean admin y no estén en el seed
+      const idsKeep = usuarios.map(u => u.id);
+      const fsSnap = await FB.db.collection('usuarios').get();
+      fsSnap.docs.forEach(d => {
+        if (!idsKeep.includes(d.id) && d.data().role !== 'admin') batch.delete(d.ref);
+      });
+      usuarios.forEach(u => {
+        batch.set(FB.db.collection('usuarios').doc(u.id), u);
+      });
+      await batch.commit();
+      console.log('Seed sincronizado a Firestore OK');
+    } catch(e) {
+      console.warn('Seed Firestore error (se usará solo local):', e);
+    }
+  }
+
+  localStorage.setItem(KEY_DONE, '1');
+  console.log('Seed inicial cargado:', empleados.length, 'empleados, usuarios limpiados a solo admins');
+}
+let useFirebase  = false;   // ¿Firebase activo?
+let empPage      = 1;
+let histPage     = 1;
+const PAGE_SIZE  = 15;
+let charts       = {};
+let qrScanner    = null;
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 5 · UTILIDADES UI
+   ────────────────────────────────────────────── */
+function toast(msg, type='info', dur=3000) {
+  const icons = { success:'ti-check', error:'ti-alert-circle', info:'ti-info-circle' };
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<i class="ti ${icons[type]||icons.info}"></i><span>${msg}</span>`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), dur);
+}
+
+function showLoader(v) {
+  document.getElementById('app-loader').classList.toggle('hidden', !v);
+}
+
+function updateSyncBadge(state) {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  const n = Store.qSize ? Store.qSize() : 0;
+  const map = {
+    online : { cls:'online',  icon:'ti-cloud-check', txt:'Firebase' },
+    offline: { cls:'offline', icon:'ti-cloud-off',   txt:`Local${n>0?` (${n} pend.)`:''}` },
+    syncing: { cls:'syncing', icon:'ti-refresh',     txt:'Sync…' },
+    pending: { cls:'offline', icon:'ti-cloud-upload', txt:`Pendientes: ${n}` }
+  };
+  const s = map[state] || map.offline;
+  el.className = `sync-badge ${s.cls}`;
+  el.innerHTML = `<i class="ti ${s.icon}"></i> ${s.txt}`;
+}
+
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function formatTime(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleTimeString('es-SV', { hour:'2-digit', minute:'2-digit' });
+}
+function formatDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('es-SV');
+}
+function todayStr() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/El_Salvador' });
+}
+function calcHoras(entrada, salida) {
+  if (!entrada || !salida) return 0;
+  return ((new Date(salida) - new Date(entrada)) / 3600000).toFixed(2);
+}
+
+function statusBadge(est) {
+  const m = { activo:'success', inactivo:'danger', presente:'success', ausente:'danger', tardanza:'warn', completo:'info' };
+  return `<span class="badge badge-${m[est]||'info'}">${est}</span>`;
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 6 · INICIALIZACIÓN
+   ────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+  // ── Arranque inmediato — NUNCA bloquear con awaits externos ──
+  applyTheme();
+  seedInicial();          // carga datos locales al instante
+  tryLocalSession();      // muestra login o app de inmediato
+  showLoader(false);      // quitar loader YA
+  bindEvents();
+  document.getElementById('setup-panel').style.display =
+    LocalAuth.hasAdmins() ? 'none' : 'block';
+
+  // ── Firebase en segundo plano — no bloquea el arranque ──
+  const FB_CONFIG = {
+    apiKey:            "AIzaSyA_a_TWNTbb_fFZsbKvDbZnAIjWAMF3-t4",
+    authDomain:        "asistencia-app-6cdee.firebaseapp.com",
+    projectId:         "asistencia-app-6cdee",
+    storageBucket:     "asistencia-app-6cdee.firebasestorage.app",
+    messagingSenderId: "407079856798",
+    appId:             "1:407079856798:web:1cc761289aa76bdc2d698f"
+  };
+  updateSyncBadge('syncing');
+  FB.init(FB_CONFIG).then(fbOk => {
+    useFirebase = fbOk;
+    updateSyncBadge(fbOk ? 'online' : 'offline');
+    if (fbOk) {
+      seedInicialConFirebase(true).catch(console.warn);
+      // Drenar cola pendiente que pudo haber quedado de sesiones anteriores
+      Store.flushQueue().catch(console.warn);
+    }
+  }).catch(() => {
+    useFirebase = false;
+    updateSyncBadge('offline');
+  });
+
+  // ── Listeners de conectividad del navegador ──
+  window.addEventListener('online', async () => {
+    console.log('Red recuperada — reintentando Firebase y cola offline…');
+    updateSyncBadge('syncing');
+    const fbOk = await FB.init(FB_CONFIG).catch(() => false);
+    if (fbOk) {
+      updateSyncBadge('syncing');
+      await Store.flushQueue().catch(console.warn);
+      // Refrescar vista activa si hay pendientes sincronizados
+      const n = Store.qSize();
+      if (n === 0) updateSyncBadge('online');
+    } else {
+      updateSyncBadge('offline');
+    }
+  });
+
+  window.addEventListener('offline', () => {
+    console.log('Sin red — modo offline activado');
+    updateSyncBadge(Store.qSize() > 0 ? 'pending' : 'offline');
+    toast('Sin conexión — los cambios se guardarán localmente y se sincronizarán al reconectar', 'warn');
+  });
+});
+
+function tryLocalSession() {
+  const sess = LocalAuth.currentSession();
+  if (sess) { currentUser = sess; showApp(); }
+  else showAuthScreen();
+}
+
+// loadUserFromFirestore eliminado — no se usa Firebase Auth
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 7 · AUTH SCREEN
+   ────────────────────────────────────────────── */
+function showAuthScreen() {
+  document.getElementById('auth-screen').style.display = 'flex';
+  document.getElementById('app-layout').classList.add('hidden');
+}
+function showApp() {
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app-layout').classList.remove('hidden');
+  document.getElementById('user-info').textContent = `${currentUser.name||currentUser.nombre||''} · @${currentUser.usuario||currentUser.email||''} · ${currentUser.role}`;
+  filterNavByRole();
+  navigateTo(getDefaultView());
+  // Si no hay Firebase configurado, mostrar aviso en sidebar
+  if (!FB.ok) updateSyncBadge('offline');
+}
+
+function filterNavByRole() {
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    const roles = (btn.dataset.roles||'').split(',');
+    btn.style.display = roles.includes(currentUser.role) ? '' : 'none';
+  });
+}
+
+function getDefaultView() {
+  return currentUser.role === 'empleado' ? 'asistencia' : 'dashboard';
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 8 · NAVEGACIÓN
+   ────────────────────────────────────────────── */
+function navigateTo(view) {
+  document.querySelectorAll('.view').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+  const sec = document.getElementById(`view-${view}`);
+  if (sec) sec.classList.add('active');
+  const btn = document.querySelector(`.nav-item[data-view="${view}"]`);
+  if (btn) {
+    btn.classList.add('active');
+    document.getElementById('page-title').textContent = btn.dataset.title || view;
+  }
+  // Cierra sidebar en móvil
+  document.getElementById('sidebar').classList.remove('open');
+  // Carga de datos por vista
+  loadView(view);
+}
+
+async function loadView(view) {
+  switch(view) {
+    case 'dashboard':    await loadDashboard();     break;
+    case 'empleados':    await loadEmpleados();     break;
+    case 'asistencia':   await loadAsistencia();    break;
+    case 'historial':    initHistorial();            break;
+    case 'reportes':     await loadSelectsReportes();break;
+    case 'usuarios':     await loadUsuarios();      break;
+    case 'auditoria':    await loadAuditoria();     break;
+    case 'configuracion': loadConfiguracion();      break;
+  }
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 9 · DASHBOARD
+   ────────────────────────────────────────────── */
+async function loadDashboard() {
+  const hoy    = todayStr();
+  document.getElementById('dash-fecha').textContent = new Date().toLocaleDateString('es-SV',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+
+  const empleados  = (await Store.getAll('empleados')).filter(e => e.estado==='activo');
+  const asistencia = (await Store.getAll('asistencia')).filter(a => a.fecha===hoy);
+
+  const presentes    = asistencia.filter(a => a.entrada).length;
+  const conSalida    = asistencia.filter(a => a.salida).length;
+  const totalHoras   = asistencia.reduce((s,a) => s + HORARIO.calcularHoras(a.entrada,a.salida).total, 0);
+  const tardanzas    = asistencia.filter(a => a.esTardanza).length;
+  const vatMadrugada = asistencia.filter(a => a.viaticoMadrugada).length;
+  const vatTarde     = asistencia.filter(a => a.viaticoSalidaTarde).length;
+  const extras       = asistencia.reduce((s,a) => s + HORARIO.calcularHoras(a.entrada,a.salida).extra, 0);
+
+  document.getElementById('kpi-presentes').textContent   = presentes;
+  document.getElementById('kpi-ausentes').textContent    = Math.max(0, empleados.length - presentes);
+  document.getElementById('kpi-entradas').textContent    = presentes;
+  document.getElementById('kpi-salidas').textContent     = conSalida;
+  document.getElementById('kpi-horas').textContent       = totalHoras.toFixed(1);
+  document.getElementById('kpi-total-emp').textContent   = empleados.length;
+  document.getElementById('kpi-tardanzas').textContent   = tardanzas;
+  document.getElementById('kpi-extras').textContent      = extras.toFixed(1);
+  const kvM = document.getElementById('kpi-viat-madrugada');
+  const kvT = document.getElementById('kpi-viat-tarde');
+  if (kvM) kvM.textContent = vatMadrugada;
+  if (kvT) kvT.textContent = vatTarde;
+
+  renderCharts(empleados, asistencia);
+}
+
+function renderCharts(empleados, asistencia) {
+  // Destruir anteriores
+  Object.values(charts).forEach(c => { try{ c.destroy(); }catch{} });
+  charts = {};
+
+  // ── Por departamento ──
+  const deptos = [...new Set(empleados.map(e => e.depto||'Sin depto'))];
+  const presDepto = deptos.map(d => asistencia.filter(a => {
+    const emp = empleados.find(e => e.id===a.empleadoId);
+    return emp?.depto===d && a.entrada;
+  }).length);
+
+  const ctx1 = document.getElementById('chart-asistencia-depto').getContext('2d');
+  charts.depto = new Chart(ctx1, {
+    type:'bar',
+    data:{ labels: deptos, datasets:[{ label:'Presentes', data: presDepto,
+      backgroundColor:'rgba(79,70,229,.7)', borderRadius:6 }]},
+    options:{ responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
+  });
+
+  // ── Estados ──
+  const presentes = asistencia.filter(a=>a.entrada).length;
+  const ausentes  = Math.max(0, empleados.length - presentes);
+  const ctx2 = document.getElementById('chart-estados').getContext('2d');
+  charts.estados = new Chart(ctx2, {
+    type:'doughnut',
+    data:{ labels:['Presentes','Ausentes'], datasets:[{
+      data:[presentes,ausentes], backgroundColor:['#10b981','#ef4444'], borderWidth:2 }]},
+    options:{ responsive:true, plugins:{ legend:{ position:'bottom' } } }
+  });
+
+  // ── Distribución de horas ──
+  const horasBuckets = [0,0,0,0];
+  asistencia.forEach(a => {
+    const h = parseFloat(calcHoras(a.entrada,a.salida)||0);
+    if (h<4) horasBuckets[0]++;
+    else if (h<8) horasBuckets[1]++;
+    else if (h===8) horasBuckets[2]++;
+    else horasBuckets[3]++;
+  });
+  const ctx3 = document.getElementById('chart-horas').getContext('2d');
+  charts.horas = new Chart(ctx3, {
+    type:'bar',
+    data:{ labels:['<4h','4-8h','8h','>8h'], datasets:[{
+      data: horasBuckets, backgroundColor:['#f59e0b','#06b6d4','#10b981','#4f46e5'], borderRadius:6 }]},
+    options:{ responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
+  });
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 10 · EMPLEADOS
+   ────────────────────────────────────────────── */
+async function loadEmpleados() {
+  const todos = await Store.getAll('empleados');
+  populateDeptSelect('filt-dept-emp', todos);
+  renderEmpleados(todos);
+}
+
+function renderEmpleados(source) {
+  const q      = document.getElementById('emp-search').value.toLowerCase();
+  const depto  = document.getElementById('filt-dept-emp').value;
+  const estado = document.getElementById('filt-estado-emp').value;
+
+  let arr = source.filter(e => {
+    const matchQ = !q || `${e.codigo}${e.nombre}${e.cargo}`.toLowerCase().includes(q);
+    const matchD = !depto || e.depto===depto;
+    const matchE = estado==='todos' || e.estado===estado;
+    return matchQ && matchD && matchE;
+  });
+
+  const total = arr.length;
+  const pages = Math.ceil(total/PAGE_SIZE) || 1;
+  empPage = Math.min(empPage, pages);
+  const slice = arr.slice((empPage-1)*PAGE_SIZE, empPage*PAGE_SIZE);
+
+  document.getElementById('empleados-count').textContent = `${total} empleados`;
+  document.getElementById('emp-page-info').textContent   = `${empPage}/${pages}`;
+
+  const tbody = document.getElementById('empleados-tbody');
+  tbody.innerHTML = slice.map(e => `
+    <tr>
+      <td>${e.codigo}</td>
+      <td>${e.nombre}</td>
+      <td>${e.cargo||'—'}</td>
+      <td>${e.depto||'—'}</td>
+      <td>${e.tel||'—'}</td>
+      <td>${statusBadge(e.estado)}</td>
+      <td>
+        <div class="btn-group">
+          <button class="btn btn-secondary btn-sm" onclick="editEmpleado('${e.id}')"><i class="ti ti-edit"></i></button>
+          <button class="btn btn-secondary btn-sm" style="color:var(--danger)" onclick="deleteEmpleado('${e.id}')"><i class="ti ti-trash"></i></button>
+        </div>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--text2);padding:20px">Sin empleados</td></tr>';
+}
+
+function populateDeptSelect(selectId, empleados) {
+  const deptos = [...new Set(empleados.map(e => e.depto).filter(Boolean))];
+  const sel = document.getElementById(selectId);
+  const prev = sel.value;
+  sel.innerHTML = `<option value="">Departamento</option>` + deptos.map(d => `<option value="${d}">${d}</option>`).join('');
+  sel.value = prev;
+}
+
+async function editEmpleado(id) {
+  const e = id ? await Store.getById('empleados', id) : null;
+  document.getElementById('modal-emp-title').textContent = id ? 'Editar empleado' : 'Nuevo empleado';
+  document.getElementById('emp-id').value      = e?.id||'';
+  document.getElementById('emp-codigo').value  = e?.codigo||'';
+  document.getElementById('emp-nombre').value  = e?.nombre||'';
+  document.getElementById('emp-cargo').value   = e?.cargo||'';
+  document.getElementById('emp-depto').value   = e?.depto||'';
+  document.getElementById('emp-tel').value     = e?.tel||'';
+  document.getElementById('emp-correo').value  = e?.correo||'';
+  document.getElementById('emp-ingreso').value = e?.ingreso||'';
+  document.getElementById('emp-estado').value  = e?.estado||'activo';
+  document.getElementById('emp-foto-data').value = e?.foto||'';
+  const prev = document.getElementById('emp-foto-preview');
+  if (e?.foto) { prev.src = e.foto; prev.classList.remove('hidden'); }
+  else { prev.src=''; prev.classList.add('hidden'); }
+  openModal('modal-empleado');
+}
+
+async function deleteEmpleado(id) {
+  if (!confirm('¿Eliminar empleado?')) return;
+  await Store.remove('empleados', id);
+  await addAudit('Empleado eliminado', `ID ${id}`, 'ti-user-minus');
+  toast('Empleado eliminado','success');
+  loadEmpleados();
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 10.5 · MOTOR DE HORARIOS (El Salvador)
+   ────────────────────────────────────────────── */
+const HORARIO = (() => {
+  // Zona horaria El Salvador = UTC-6, sin DST
+  const TZ = 'America/El_Salvador';
+
+  // Convierte un ISO string a Date local SV
+  function svDate(iso) {
+    return iso ? new Date(new Date(iso).toLocaleString('en-US', { timeZone: TZ })) : null;
+  }
+
+  // Hora actual en SV
+  function ahoraEnSV() {
+    return new Date(new Date().toLocaleString('en-US', { timeZone: TZ }));
+  }
+
+  // Día de semana SV: 0=Dom, 1=Lun … 6=Sáb
+  function diaSV(iso) {
+    return iso ? svDate(iso).getDay() : ahoraEnSV().getDay();
+  }
+
+  // Devuelve true si el día es laborable (Lun-Vie)
+  function esLaborable(iso) {
+    const d = diaSV(iso);
+    return d >= 1 && d <= 5;
+  }
+
+  // Minutos desde medianoche en SV
+  function minutosSV(iso) {
+    const d = svDate(iso);
+    return d.getHours() * 60 + d.getMinutes();
+  }
+
+  // Horario de salida normal según día
+  // Lun-Jue: 18:00 (1080 min), Vie: 17:00 (1020 min)
+  function minSalidaNormal(iso) {
+    return diaSV(iso) === 5 ? 1020 : 1080; // viernes : lun-jue
+  }
+
+  // ── Viático madrugada: entrada entre 6:30 y 07:15 (Lun–Vie) ──
+  function viaticoMadrugada(entradaISO) {
+    if (!entradaISO || !esLaborable(entradaISO)) return false;
+    const m = minutosSV(entradaISO);
+    return m >= 390 && m <= 435; // 6:30=390, 7:15=435
+  }
+
+  // ── Viático salida tarde (Lun-Jue: >18:30, Vie: >17:30) ──
+  function viaticoSalidaTarde(salidaISO) {
+    if (!salidaISO) return false;
+    const d = diaSV(salidaISO);
+    if (d === 0 || d === 6) return false; // finde
+    const m = minutosSV(salidaISO);
+    if (d === 5) return m >= 1050; // Vie: 17:30=1050
+    return m >= 1110;              // Lun-Jue: 18:30=1110
+  }
+
+  // ── Tardanza: entrada después de 08:10 en día laborable ──
+  function esTardanza(entradaISO) {
+    if (!entradaISO || !esLaborable(entradaISO)) return false;
+    return minutosSV(entradaISO) > 490; // >8:10
+  }
+
+  // ── Horas trabajadas (solo la parte dentro del horario normal) ──
+  // Devuelve objeto con horasNormal, horasExtra
+  function calcularHoras(entradaISO, salidaISO) {
+    if (!entradaISO || !salidaISO) return { total: 0, normal: 0, extra: 0 };
+    const eMin = minutosSV(entradaISO);
+    const sMin = minutosSV(salidaISO);
+    if (sMin <= eMin) return { total: 0, normal: 0, extra: 0 };
+
+    const salidaNormal = minSalidaNormal(entradaISO);
+    const inicioNormal = 480; // 8:00
+
+    // Horas normales: entre 08:00 y hora de salida normal
+    const normalStart = Math.max(eMin, inicioNormal);
+    const normalEnd   = Math.min(sMin, salidaNormal);
+    const normal      = Math.max(0, normalEnd - normalStart) / 60;
+
+    // Horas extra: lo que pasa de la hora de salida normal
+    const extra = sMin > salidaNormal ? (sMin - salidaNormal) / 60 : 0;
+
+    const total = (sMin - eMin) / 60;
+    return {
+      total:  +total.toFixed(2),
+      normal: +normal.toFixed(2),
+      extra:  +extra.toFixed(2)
+    };
+  }
+
+  // ── Badge de estado completo para un registro ──
+  function badges(registro) {
+    const tags = [];
+    if (!registro.entrada) return '<span class="badge badge-danger">Ausente</span>';
+
+    if (esTardanza(registro.entrada))          tags.push('<span class="badge badge-warn">Tardanza</span>');
+    if (viaticoMadrugada(registro.entrada))    tags.push('<span class="badge badge-info">Viát. Madrugada</span>');
+    if (registro.salida) {
+      if (viaticoSalidaTarde(registro.salida)) tags.push('<span class="badge badge-info">Viát. Salida Tarde</span>');
+      tags.push('<span class="badge badge-success">Completo</span>');
+    } else {
+      tags.push('<span class="badge badge-success">Presente</span>');
+    }
+    return tags.join(' ');
+  }
+
+  // ── Resumen texto para toast/status ──
+  function resumenEntrada(entradaISO) {
+    const msgs = [];
+    if (esTardanza(entradaISO))        msgs.push('⚠ Tardanza');
+    if (viaticoMadrugada(entradaISO))  msgs.push('🌙 Viático madrugada aplicado');
+    return msgs.length ? msgs.join(' · ') : '✓ Entrada en horario';
+  }
+
+  function resumenSalida(salidaISO) {
+    const msgs = [];
+    if (viaticoSalidaTarde(salidaISO)) msgs.push('🌙 Viático salida tarde aplicado');
+    return msgs.length ? msgs.join(' · ') : '✓ Salida en horario';
+  }
+
+  // ¿Es fin de semana hoy?
+  function esFinDeSemana() {
+    const d = ahoraEnSV().getDay();
+    return d === 0 || d === 6;
+  }
+
+  return {
+    esLaborable, esFinDeSemana,
+    viaticoMadrugada, viaticoSalidaTarde, esTardanza,
+    calcularHoras, badges,
+    resumenEntrada, resumenSalida,
+    svDate, minutosSV, diaSV
+  };
+})();
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 11 · ASISTENCIA
+   ────────────────────────────────────────────── */
+async function loadAsistencia() {
+  const empleados = (await Store.getAll('empleados')).filter(e => e.estado==='activo');
+  const sel = document.getElementById('asist-empleado');
+  sel.innerHTML = '<option value="">Seleccionar…</option>' +
+    empleados.map(e => `<option value="${e.id}">${e.codigo} — ${e.nombre}</option>`).join('');
+  // Configurar vista según rol
+  const greetingEl = document.getElementById('emp-greeting');
+  if (currentUser.role==='empleado' && currentUser.empleadoId) {
+    sel.value    = currentUser.empleadoId;
+    sel.disabled = true;
+    if (greetingEl) greetingEl.style.display = '';
+    // Ocultar label del select (el empleado ya sabe quién es)
+    sel.closest('.field').style.display = 'none';
+    // Mostrar banner de estado aunque el select esté oculto
+    document.getElementById('asist-emp-banner').style.display = '';
+
+    // Tarjeta de bienvenida
+    const allEmps = await Store.getAll('empleados');
+    const emp     = allEmps.find(e => e.id===currentUser.empleadoId);
+    if (emp && greetingEl) {
+      const hoy    = todayStr();
+      const asist  = (await Store.getAll('asistencia')).find(a => a.empleadoId===emp.id && a.fecha===hoy);
+      const horaEl = new Date().toLocaleTimeString('es-SV',{timeZone:'America/El_Salvador',hour:'2-digit',minute:'2-digit'});
+      let estadoHoy = '';
+      if (asist?.entrada && asist?.salida) {
+        estadoHoy = '<span class="badge badge-success"><i class="ti ti-check"></i> Jornada completada</span>';
+      } else if (asist?.entrada) {
+        estadoHoy = '<span class="badge badge-info"><i class="ti ti-clock"></i> Entrada registrada ' + formatTime(asist.entrada) + '</span>';
+      } else {
+        estadoHoy = '<span class="badge badge-warn"><i class="ti ti-alert-circle"></i> Sin registro hoy</span>';
+      }
+      const fotoHtml = emp.foto
+        ? '<img src="'+emp.foto+'" style="width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid var(--primary)">'
+        : '<div style="width:52px;height:52px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;font-size:22px;color:#fff"><i class=\"ti ti-user\"></i></div>';
+      greetingEl.innerHTML =
+        '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">'
+        + '<div>' + fotoHtml + '</div>'
+        + '<div style="flex:1">'
+        + '<div style="font-weight:700;font-size:17px">' + '\u00a1' + 'Hola, ' + emp.nombre.split(' ')[0] + '!</div>'
+        + '<div style="color:var(--text2);font-size:13px">' + (emp.cargo||'Empleado') + (emp.depto ? ' &nbsp;&middot;&nbsp; ' + emp.depto : '') + '</div>'
+        + '<div style="margin-top:6px">' + estadoHoy + '</div>'
+        + '</div>'
+        + '<div style="text-align:right;color:var(--text2);font-size:13px">'
+        + '<div style="font-size:26px;font-weight:700;color:var(--text)">' + horaEl + '</div>'
+        + '<div>' + new Date().toLocaleDateString('es-SV',{weekday:'short',day:'numeric',month:'short'}) + '</div>'
+        + '</div>'
+        + '</div>';
+    }
+  } else {
+    if (greetingEl) greetingEl.style.display = 'none';
+    sel.disabled = false;
+    sel.closest('.field').style.display = '';
+  }
+
+  // Mostrar aviso de fin de semana
+  const statusEl = document.getElementById('marcaje-status');
+  if (HORARIO.esFinDeSemana()) {
+    statusEl.innerHTML = `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;color:#92400e;display:flex;gap:8px;align-items:center">
+      <i class="ti ti-beach" style="font-size:20px"></i>
+      <div><strong>Hoy es día de descanso</strong><br>
+      <span style="font-size:12px">No se registra asistencia los sábados y domingos.</span></div>
+    </div>`;
+    document.getElementById('btn-entrada').disabled = true;
+    document.getElementById('btn-salida').disabled  = true;
+  } else {
+    document.getElementById('btn-entrada').disabled = false;
+    document.getElementById('btn-salida').disabled  = false;
+    // Info del horario del día
+    const d = new Date(new Date().toLocaleString('en-US',{timeZone:'America/El_Salvador'})).getDay();
+    const esSalidaViernes = d === 5;
+    statusEl.innerHTML = `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text2)">
+      <i class="ti ti-clock" style="margin-right:4px"></i>
+      Horario hoy: <strong>08:00</strong> → <strong>${esSalidaViernes?'17:00':'18:00'}</strong>
+      &nbsp;·&nbsp; Viát. madrugada: <strong>06:30–07:15</strong>
+      &nbsp;·&nbsp; Tardanza: después de <strong>08:10</strong>
+      &nbsp;·&nbsp; Viát. salida tarde: después de <strong>${esSalidaViernes?'17:30':'18:30'}</strong>
+    </div>`;
+  }
+
+  await renderAsistenciaHoy();
+  // Actualizar banner si ya hay un empleado seleccionado
+  await actualizarBannerAsistencia();
+}
+
+async function renderAsistenciaHoy() {
+  const hoy    = todayStr();
+  const todos  = await Store.getAll('asistencia');
+  const hoyArr = todos.filter(a => a.fecha===hoy);
+  const emps   = await Store.getAll('empleados');
+
+  const tbody = document.getElementById('asistencia-hoy-tbody');
+  tbody.innerHTML = hoyArr.map(a => {
+    const emp  = emps.find(e => e.id===a.empleadoId);
+    const hrs  = HORARIO.calcularHoras(a.entrada, a.salida);
+    const extraTag = hrs.extra > 0 ? `<span class="badge badge-warn" style="margin-left:4px">+${hrs.extra}h extra</span>` : '';
+    return `<tr>
+      <td>${emp?.codigo||'—'}</td>
+      <td>${emp?.nombre||'—'}</td>
+      <td>${formatTime(a.entrada)}</td>
+      <td>${formatTime(a.salida)}</td>
+      <td>${hrs.total>0 ? hrs.normal+'h'+extraTag : '—'}</td>
+      <td>${HORARIO.badges(a)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text2);padding:16px">Sin registros hoy</td></tr>';
+}
+
+/* ── Obtener ubicación GPS (retorna objeto o null si el usuario la deniega) ── */
+function obtenerUbicacion() {
+  return new Promise(resolve => {
+    if (!navigator.geolocation) { resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6), precision: Math.round(pos.coords.accuracy) }),
+      ()  => resolve(null),
+      { timeout: 8000, maximumAge: 0, enableHighAccuracy: true }
+    );
+  });
+}
+
+/* ── Genera enlace de Google Maps a partir de coordenadas ── */
+function mapLink(lat, lng) {
+  return `https://www.google.com/maps?q=${lat},${lng}`;
+}
+
+async function marcar(tipo) {
+  const empId = document.getElementById('asist-empleado').value;
+  const obs   = document.getElementById('asist-obs').value;
+  if (!empId) { toast('Selecciona un empleado','error'); return; }
+
+  // Bloquear fines de semana
+  if (HORARIO.esFinDeSemana()) {
+    toast('Hoy es día de descanso. No se registra asistencia.','error'); return;
+  }
+
+  const hoy   = todayStr();
+  const todos = await Store.getAll('asistencia');
+  let registro = todos.find(a => a.empleadoId===empId && a.fecha===hoy);
+
+  const ahora = new Date().toISOString();
+
+  // ── Solicitar ubicación GPS ──
+  const statusEl = document.getElementById('marcaje-status');
+  statusEl.innerHTML = `<div style="color:var(--text2);font-size:13px;padding:8px 0"><i class="ti ti-map-pin" style="color:var(--primary)"></i> Obteniendo ubicación GPS…</div>`;
+  const ubicacion = await obtenerUbicacion();
+
+  if (tipo==='entrada') {
+    if (registro?.entrada) { toast('Ya registró entrada hoy','error'); return; }
+    if (!registro) registro = { empleadoId: empId, fecha: hoy };
+    registro.entrada           = ahora;
+    registro.viaticoMadrugada  = HORARIO.viaticoMadrugada(ahora);
+    registro.esTardanza        = HORARIO.esTardanza(ahora);
+    registro.obs               = obs;
+    if (ubicacion) {
+      registro.latEntrada  = ubicacion.lat;
+      registro.lngEntrada  = ubicacion.lng;
+      registro.precEntrada = ubicacion.precision;
+    }
+  } else {
+    if (!registro?.entrada) { toast('Primero debe marcar entrada','error'); return; }
+    if (registro.salida)    { toast('Ya registró salida hoy','error');    return; }
+    registro.salida             = ahora;
+    registro.viaticoSalidaTarde = HORARIO.viaticoSalidaTarde(ahora);
+    const hrs                   = HORARIO.calcularHoras(registro.entrada, ahora);
+    registro.horasNormal        = hrs.normal;
+    registro.horasExtra         = hrs.extra;
+    registro.horasTotal         = hrs.total;
+    registro.obs                = obs || registro.obs;
+    if (ubicacion) {
+      registro.latSalida  = ubicacion.lat;
+      registro.lngSalida  = ubicacion.lng;
+      registro.precSalida = ubicacion.precision;
+    }
+  }
+
+  updateSyncBadge('syncing');
+  await Store.save('asistencia', registro);
+  updateSyncBadge(FB.ok?'online':'offline');
+
+  const emp     = await Store.getById('empleados', empId);
+  const resumen = tipo==='entrada' ? HORARIO.resumenEntrada(ahora) : HORARIO.resumenSalida(ahora);
+  const tipoLabel = tipo==='entrada' ? 'Entrada' : 'Salida';
+  toast(`${tipoLabel} — ${emp?.nombre}`, registro.esTardanza||registro.viaticoMadrugada||registro.viaticoSalidaTarde ? 'info' : 'success');
+
+  // ── Bloque de ubicación para mostrar en pantalla ──
+  let gpsHTML = '';
+  if (ubicacion) {
+    const link = mapLink(ubicacion.lat, ubicacion.lng);
+    gpsHTML = `<div style="font-size:12px;margin-top:6px;display:flex;align-items:center;gap:6px">
+      <i class="ti ti-map-pin" style="color:var(--success);font-size:14px"></i>
+      <span style="color:var(--text2)">Ubicación: <strong>${ubicacion.lat}, ${ubicacion.lng}</strong>
+      (±${ubicacion.precision}m) &nbsp;
+      <a href="${link}" target="_blank" style="color:var(--primary)"><i class="ti ti-external-link"></i> Ver en mapa</a></span>
+    </div>`;
+  } else {
+    gpsHTML = `<div style="font-size:12px;margin-top:6px;color:var(--text2)">
+      <i class="ti ti-map-pin-off" style="color:var(--warn)"></i> Ubicación no disponible (permiso denegado o sin GPS)
+    </div>`;
+  }
+
+  // Estado visual en pantalla
+  let statusHTML = `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:8px">
+    <div style="font-weight:600;margin-bottom:4px"><i class="ti ti-check" style="color:var(--success)"></i> ${tipoLabel} registrada — ${new Date().toLocaleTimeString('es-SV',{timeZone:'America/El_Salvador'})}</div>
+    <div style="font-size:12px;color:var(--text2)">${resumen}</div>
+    ${gpsHTML}`;
+  if (tipo==='salida') {
+    const hrs = HORARIO.calcularHoras(registro.entrada, ahora);
+    statusHTML += `<div style="font-size:12px;margin-top:4px">
+      Horas normales: <strong>${hrs.normal}h</strong>
+      ${hrs.extra > 0 ? ` · Horas extra: <strong style="color:var(--warn)">${hrs.extra}h</strong>` : ''}
+    </div>`;
+  }
+  statusHTML += '</div>';
+  statusEl.innerHTML = statusHTML;
+
+  document.getElementById('asist-obs').value = '';
+  await addAudit(`Marcaje ${tipo}${registro.viaticoMadrugada?' [Viát.Madrugada]':''}${registro.viaticoSalidaTarde?' [Viát.Tarde]':''}${registro.esTardanza?' [Tardanza]':''}`,
+    emp?.nombre||empId, tipo==='entrada'?'ti-login':'ti-logout');
+  await renderAsistenciaHoy();
+  await actualizarBannerAsistencia();
+}
+
+/* ── Actualiza el banner de estado al seleccionar empleado ── */
+async function actualizarBannerAsistencia() {
+  const empId    = document.getElementById('asist-empleado').value;
+  const bannerEl = document.getElementById('asist-emp-banner');
+  if (!empId) { bannerEl.style.display = 'none'; return; }
+
+  const hoy     = todayStr();
+  const todos   = await Store.getAll('asistencia');
+  const registro = todos.find(a => a.empleadoId === empId && a.fecha === hoy);
+
+  bannerEl.style.display = '';
+  bannerEl.className = ''; // limpiar clases anteriores
+  bannerEl.id = 'asist-emp-banner'; // restaurar id
+
+  if (!registro || !registro.entrada) {
+    bannerEl.classList.add('sin-registro');
+    bannerEl.innerHTML = `
+      <i class="ti ti-clock-exclamation banner-icon" style="color:#d97706"></i>
+      <div class="banner-text">
+        <strong>Sin registro de entrada hoy</strong>
+        <span style="color:var(--text2)">Este empleado aún no ha marcado entrada el día de hoy.</span>
+      </div>`;
+  } else if (registro.entrada && !registro.salida) {
+    const horaEntrada = formatTime(registro.entrada);
+    bannerEl.classList.add('con-entrada');
+    bannerEl.innerHTML = `
+      <i class="ti ti-login banner-icon" style="color:#059669"></i>
+      <div class="banner-text">
+        <strong>Entrada registrada a las ${horaEntrada}</strong>
+        <span style="color:var(--text2)">Aún no ha marcado salida. Puede registrar salida ahora.</span>
+      </div>`;
+  } else {
+    const horaEntrada = formatTime(registro.entrada);
+    const horaSalida  = formatTime(registro.salida);
+    const hrs = HORARIO.calcularHoras(registro.entrada, registro.salida);
+    bannerEl.classList.add('completo');
+    bannerEl.innerHTML = `
+      <i class="ti ti-circle-check banner-icon" style="color:#2563eb"></i>
+      <div class="banner-text">
+        <strong>Jornada completa — Entrada ${horaEntrada} / Salida ${horaSalida}</strong>
+        <span style="color:var(--text2)">Total: ${hrs.normal}h normales${hrs.extra > 0 ? ` · <strong style="color:#d97706">${hrs.extra}h extra</strong>` : ''}. No hay acciones pendientes hoy.</span>
+      </div>`;
+  }
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 12 · HISTORIAL
+   ────────────────────────────────────────────── */
+let _histCache = []; // caché de todos los registros del filtro actual (sin paginar)
+
+function initHistorial() {
+  const hoy = todayStr();
+  if (!document.getElementById('hist-desde').value) {
+    document.getElementById('hist-desde').value = hoy.slice(0,7)+'-01';
+    document.getElementById('hist-hasta').value = hoy;
+  }
+  loadHistorial();
+}
+
+async function loadHistorial() {
+  const desde  = document.getElementById('hist-desde').value;
+  const hasta  = document.getElementById('hist-hasta').value;
+  const empFil = document.getElementById('hist-empleado').value;
+  const dptFil = document.getElementById('hist-depto').value;
+
+  const emps  = await Store.getAll('empleados');
+  const todos = await Store.getAll('asistencia');
+
+  // Poblar selects
+  const hEmp = document.getElementById('hist-empleado');
+  const prev = hEmp.value;
+  hEmp.innerHTML = '<option value="">Todos</option>' + emps.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join('');
+  hEmp.value = prev;
+
+  populateDeptSelectHist(emps);
+
+  let arr = todos.filter(a => {
+    if (desde && a.fecha < desde) return false;
+    if (hasta && a.fecha > hasta) return false;
+    if (empFil && a.empleadoId !== empFil) return false;
+    if (dptFil) {
+      const emp = emps.find(e=>e.id===a.empleadoId);
+      if (emp?.depto !== dptFil) return false;
+    }
+    return true;
+  }).sort((a,b) => b.fecha.localeCompare(a.fecha));
+
+  const total = arr.length;
+  _histCache  = arr; // guardar para exportar sin paginación
+  const pages = Math.ceil(total/PAGE_SIZE)||1;
+  histPage = Math.min(histPage, pages);
+  const slice = arr.slice((histPage-1)*PAGE_SIZE, histPage*PAGE_SIZE);
+
+  document.getElementById('hist-count').textContent   = `${total} registros`;
+  document.getElementById('hist-page-info').textContent = `${histPage}/${pages}`;
+
+  const tbody = document.getElementById('historial-tbody');
+  tbody.innerHTML = slice.map(a => {
+    const emp = emps.find(e=>e.id===a.empleadoId);
+    const hrs = HORARIO.calcularHoras(a.entrada, a.salida);
+    const vTags = [];
+    if (a.viaticoMadrugada)    vTags.push('<span class="badge badge-info">Madrugada</span>');
+    if (a.viaticoSalidaTarde)  vTags.push('<span class="badge badge-info">Salida Tarde</span>');
+    if (a.esTardanza)          vTags.push('<span class="badge badge-warn">Tardanza</span>');
+    // ── Ubicación: mostrar links a mapa si hay coordenadas ──
+    let ubHTML = '—';
+    const tieneUbicacion = a.latEntrada || a.latSalida;
+    if (tieneUbicacion) {
+      const links = [];
+      if (a.latEntrada) links.push(`<a href="${mapLink(a.latEntrada,a.lngEntrada)}" target="_blank" style="color:var(--success);font-size:12px" title="Entrada: ${a.latEntrada},${a.lngEntrada} ±${a.precEntrada||'?'}m"><i class="ti ti-login"></i> Entrada</a>`);
+      if (a.latSalida)  links.push(`<a href="${mapLink(a.latSalida,a.lngSalida)}" target="_blank" style="color:var(--danger);font-size:12px" title="Salida: ${a.latSalida},${a.lngSalida} ±${a.precSalida||'?'}m"><i class="ti ti-logout"></i> Salida</a>`);
+      ubHTML = links.join(' ');
+    }
+    return `<tr>
+      <td>${a.fecha}</td>
+      <td>${emp?.codigo||'—'}</td>
+      <td>${emp?.nombre||'—'}</td>
+      <td>${emp?.depto||'—'}</td>
+      <td>${formatTime(a.entrada)}</td>
+      <td>${formatTime(a.salida)}</td>
+      <td>${hrs.total>0?hrs.normal+'h':'—'}</td>
+      <td>${hrs.extra>0?'<span style="color:var(--warn);font-weight:600">'+hrs.extra+'h</span>':'—'}</td>
+      <td>${vTags.join(' ')||'—'}</td>
+      <td>${ubHTML}</td>
+      <td>${HORARIO.badges(a)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="11" style="text-align:center;color:var(--text2);padding:16px">Sin registros</td></tr>';
+}
+
+function populateDeptSelectHist(emps) {
+  const deptos = [...new Set(emps.map(e=>e.depto).filter(Boolean))];
+  const sel = document.getElementById('hist-depto');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">Todos</option>' + deptos.map(d=>`<option value="${d}">${d}</option>`).join('');
+  sel.value = prev;
+}
+
+/* ── Exportar Historial ── */
+async function _histDataForExport() {
+  if (!_histCache.length) { toast('Primero realiza una búsqueda','error'); return null; }
+  const emps = await Store.getAll('empleados');
+  return _histCache.map(a => {
+    const emp = emps.find(e => e.id === a.empleadoId);
+    const hrs = HORARIO.calcularHoras(a.entrada, a.salida);
+    return {
+      Fecha:            a.fecha,
+      Codigo:           emp?.codigo   || '',
+      Nombre:           emp?.nombre   || '',
+      Departamento:     emp?.depto    || '',
+      Entrada:          formatTime(a.entrada),
+      Salida:           formatTime(a.salida),
+      Horas_Normal:     hrs.normal,
+      Horas_Extra:      hrs.extra,
+      Horas_Total:      hrs.total,
+      Tardanza:         a.esTardanza        ? 'Sí' : 'No',
+      Viat_Madrugada:   a.viaticoMadrugada  ? 'Sí' : 'No',
+      Viat_SalidaTarde: a.viaticoSalidaTarde? 'Sí' : 'No',
+      Observaciones:    a.observacion || '',
+      Estado:           a.salida ? 'Completo' : a.entrada ? 'Presente' : 'Ausente'
+    };
+  });
+}
+
+async function exportHistCSV() {
+  const data = await _histDataForExport(); if (!data) return;
+  const headers = Object.keys(data[0]);
+  const rows    = data.map(r => headers.map(h => `"${String(r[h]).replace(/"/g,'""')}"`).join(','));
+  download('historial.csv', 'text/csv;charset=utf-8', '\uFEFF' + [headers.join(','), ...rows].join('\n'));
+  toast('CSV historial descargado','success');
+}
+
+async function exportHistXLSX() {
+  const data = await _histDataForExport(); if (!data) return;
+  const ws = XLSX.utils.json_to_sheet(data);
+  ws['!cols'] = [10,8,24,16,8,8,10,10,10,10,14,14,20,10].map(w=>({wch:w}));
+  // Estilos de cabecera (SheetJS no soporta estilos en la versión libre, pero sí congelado)
+  ws['!freeze'] = { xSplit:0, ySplit:1 };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Historial');
+  XLSX.writeFile(wb, 'historial.xlsx');
+  toast('Excel historial descargado','success');
+}
+
+async function exportHistPDF() {
+  const data = await _histDataForExport(); if (!data) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
+
+  // Encabezado
+  doc.setFillColor(79,70,229);
+  doc.rect(0,0,297,18,'F');
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(13); doc.setFont(undefined,'bold');
+  doc.text('Historial de Asistencia', 14, 12);
+  doc.setFontSize(8); doc.setFont(undefined,'normal');
+  doc.text(`Generado: ${new Date().toLocaleString('es-SV',{timeZone:'America/El_Salvador'})}  ·  ${data.length} registros`, 200, 12);
+
+  // Resumen rápido
+  const conExtra   = data.filter(r => r.Horas_Extra > 0).length;
+  const conTardanza = data.filter(r => r.Tardanza === 'Sí').length;
+  const totalHNorm = data.reduce((s,r) => s + (r.Horas_Normal||0), 0);
+  const totalHExt  = data.reduce((s,r) => s + (r.Horas_Extra||0), 0);
+  doc.setTextColor(80,80,80); doc.setFontSize(8);
+  doc.text(`H. normales: ${totalHNorm}h  ·  H. extra: ${totalHExt}h  ·  Tardanzas: ${conTardanza}  ·  Con horas extra: ${conExtra}`, 14, 24);
+
+  const heads = [['Fecha','Código','Nombre','Depto','Entrada','Salida','H.Norm','H.Extra','Tardanza','Viát.Madr','Viát.Tarde','Estado']];
+  const rows  = data.map(r => [
+    r.Fecha, r.Codigo, r.Nombre, r.Departamento,
+    r.Entrada, r.Salida,
+    r.Horas_Normal > 0 ? r.Horas_Normal+'h' : '—',
+    r.Horas_Extra  > 0 ? r.Horas_Extra+'h'  : '—',
+    r.Tardanza, r.Viat_Madrugada, r.Viat_SalidaTarde, r.Estado
+  ]);
+
+  doc.autoTable({
+    head: heads, body: rows, startY: 28,
+    styles:     { fontSize: 7.5, cellPadding: 2 },
+    headStyles: { fillColor:[79,70,229], textColor:255, fontStyle:'bold', fontSize:8 },
+    alternateRowStyles: { fillColor:[245,245,255] },
+    columnStyles: {
+      7:  { textColor:[217,119,6],  fontStyle:'bold' }, // H.Extra
+      8:  { textColor:[220,38,38]  },                   // Tardanza
+      9:  { textColor:[2,132,199]  },                   // Viát.Madr
+      10: { textColor:[2,132,199]  },                   // Viát.Tarde
+    },
+    didDrawPage: (d) => {
+      // Pie de página
+      doc.setFontSize(7); doc.setTextColor(150);
+      doc.text(`Página ${d.pageNumber}`, 280, 205, { align:'right' });
+    }
+  });
+  doc.save('historial.pdf');
+  toast('PDF historial descargado','success');
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 13 · REPORTES
+   ────────────────────────────────────────────── */
+async function loadSelectsReportes() {
+  const emps   = await Store.getAll('empleados');
+  const deptos = [...new Set(emps.map(e=>e.depto).filter(Boolean))];
+  const empOpts = '<option value="">Todos</option>' + emps.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join('');
+  document.getElementById('rep-empleado').innerHTML = empOpts;
+  document.getElementById('rep-depto').innerHTML =
+    '<option value="">Todos</option>' + deptos.map(d=>`<option value="${d}">${d}</option>`).join('');
+  document.getElementById('viat-empleado').innerHTML = empOpts;
+  // Default dates para viáticos: mes actual
+  const hoy = todayStr();
+  if (!document.getElementById('viat-desde').value) {
+    document.getElementById('viat-desde').value = hoy.slice(0,7)+'-01';
+    document.getElementById('viat-hasta').value  = hoy;
+  }
+}
+
+async function getReportData() {
+  const tipo   = document.getElementById('rep-tipo').value;
+  const empFil = document.getElementById('rep-empleado').value;
+  const dptFil = document.getElementById('rep-depto').value;
+  const hoy = new Date();
+  let desde, hasta;
+
+  if (tipo==='diario') {
+    desde = hasta = todayStr();
+  } else if (tipo==='semanal') {
+    const mon = new Date(hoy); mon.setDate(hoy.getDate()-hoy.getDay()+1);
+    desde = mon.toISOString().slice(0,10);
+    hasta = todayStr();
+  } else {
+    desde = hoy.toISOString().slice(0,8)+'01';
+    hasta = todayStr();
+  }
+
+  const emps  = await Store.getAll('empleados');
+  const todos = await Store.getAll('asistencia');
+
+  return todos.filter(a => {
+    if (a.fecha<desde||a.fecha>hasta) return false;
+    if (empFil && a.empleadoId!==empFil) return false;
+    if (dptFil) {
+      const e = emps.find(x=>x.id===a.empleadoId);
+      if (e?.depto!==dptFil) return false;
+    }
+    return true;
+  }).map(a => {
+    const e   = emps.find(x=>x.id===a.empleadoId);
+    const hrs = HORARIO.calcularHoras(a.entrada, a.salida);
+    return {
+      Fecha:           a.fecha,
+      Codigo:          e?.codigo||'',
+      Nombre:          e?.nombre||'',
+      Departamento:    e?.depto||'',
+      Entrada:         formatTime(a.entrada),
+      Salida:          formatTime(a.salida),
+      Horas_Normal:    hrs.normal,
+      Horas_Extra:     hrs.extra,
+      Horas_Total:     hrs.total,
+      Tardanza:        a.esTardanza       ? 'Sí' : 'No',
+      Viat_Madrugada:  a.viaticoMadrugada  ? 'Sí' : 'No',
+      Viat_SalidaTarde:a.viaticoSalidaTarde? 'Sí' : 'No',
+      Estado:          a.salida?'Completo':a.entrada?'Presente':'Ausente'
+    };
+  });
+}
+
+/* ── VIÁTICOS: obtener datos filtrados ── */
+let viatPage = 1;
+let viatCache = [];
+
+async function getViaticosData() {
+  const desde  = document.getElementById('viat-desde').value;
+  const hasta  = document.getElementById('viat-hasta').value;
+  const empFil = document.getElementById('viat-empleado').value;
+  const tipoFil= document.getElementById('viat-tipo-filtro').value;
+
+  const emps  = await Store.getAll('empleados');
+  const todos = await Store.getAll('asistencia');
+
+  return todos.filter(a => {
+    if (desde && a.fecha < desde) return false;
+    if (hasta && a.fecha > hasta) return false;
+    if (empFil && a.empleadoId !== empFil) return false;
+    // Filtro por tipo de viático
+    if (tipoFil === 'madrugada' && !a.viaticoMadrugada)    return false;
+    if (tipoFil === 'tarde'     && !a.viaticoSalidaTarde)   return false;
+    if (tipoFil === 'ambos'     && !(a.viaticoMadrugada && a.viaticoSalidaTarde)) return false;
+    // Solo mostrar registros con al menos un viático
+    if (!tipoFil && !a.viaticoMadrugada && !a.viaticoSalidaTarde) return false;
+    return true;
+  }).sort((a,b) => b.fecha.localeCompare(a.fecha))
+    .map(a => {
+      const e   = emps.find(x=>x.id===a.empleadoId);
+      const hrs = HORARIO.calcularHoras(a.entrada, a.salida);
+      return {
+        _raw: a,
+        Fecha:            a.fecha,
+        Codigo:           e?.codigo||'',
+        Nombre:           e?.nombre||'',
+        Departamento:     e?.depto||'',
+        Entrada:          formatTime(a.entrada),
+        Salida:           formatTime(a.salida),
+        Horas_Extra:      hrs.extra,
+        Viat_Madrugada:   a.viaticoMadrugada   ? 'Sí' : 'No',
+        Viat_SalidaTarde: a.viaticoSalidaTarde  ? 'Sí' : 'No',
+      };
+    });
+}
+
+async function buscarViaticos() {
+  viatCache = await getViaticosData();
+  viatPage  = 1;
+  renderViaticosTabla();
+}
+
+function renderViaticosTabla() {
+  const total = viatCache.length;
+  const pages = Math.ceil(total / PAGE_SIZE) || 1;
+  viatPage = Math.min(viatPage, pages);
+  const slice = viatCache.slice((viatPage-1)*PAGE_SIZE, viatPage*PAGE_SIZE);
+
+  // KPIs
+  const kpiRow   = document.getElementById('viat-kpi-row');
+  const paginRow = document.getElementById('viat-pagination');
+  const expBtns  = document.getElementById('viat-export-btns');
+  kpiRow.style.display   = total ? '' : 'none';
+  paginRow.style.display = total ? '' : 'none';
+  expBtns.style.display  = total ? '' : 'none';
+
+  const totalM   = viatCache.filter(r => r.Viat_Madrugada==='Sí').length;
+  const totalT   = viatCache.filter(r => r.Viat_SalidaTarde==='Sí').length;
+  const personas = new Set(viatCache.map(r => r.Codigo)).size;
+
+  document.getElementById('viat-kpi-total').textContent     = total;
+  document.getElementById('viat-kpi-madrugada').textContent = totalM;
+  document.getElementById('viat-kpi-tarde').textContent     = totalT;
+  document.getElementById('viat-kpi-personas').textContent  = personas;
+  document.getElementById('viat-count').textContent         = `${total} registros`;
+  document.getElementById('viat-page-info').textContent     = `${viatPage}/${pages}`;
+
+  const tbody = document.getElementById('viaticos-tbody');
+  if (!slice.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text2);padding:20px">Sin viáticos en el período seleccionado</td></tr>';
+    return;
+  }
+  tbody.innerHTML = slice.map(r => `
+    <tr>
+      <td>${r.Fecha}</td>
+      <td>${r.Codigo}</td>
+      <td>${r.Nombre}</td>
+      <td>${r.Departamento||'—'}</td>
+      <td>${r.Entrada}</td>
+      <td>${r.Salida}</td>
+      <td>${r.Horas_Extra>0?'<span style="color:var(--warn);font-weight:600">'+r.Horas_Extra+'h</span>':'—'}</td>
+      <td>${r.Viat_Madrugada==='Sí'
+          ? '<span class="badge badge-info"><i class="ti ti-moon-stars"></i> Madrugada</span>'
+          : '<span style="color:var(--text2)">—</span>'}</td>
+      <td>${r.Viat_SalidaTarde==='Sí'
+          ? '<span class="badge badge-info"><i class="ti ti-sunset"></i> Salida Tarde</span>'
+          : '<span style="color:var(--text2)">—</span>'}</td>
+    </tr>`).join('');
+}
+
+async function exportViaticosCSV() {
+  if (!viatCache.length) { toast('Primero realiza una búsqueda','error'); return; }
+  const cols = ['Fecha','Codigo','Nombre','Departamento','Entrada','Salida','Horas_Extra','Viat_Madrugada','Viat_SalidaTarde'];
+  const rows = viatCache.map(r => cols.map(c => `"${r[c]}"`).join(','));
+  download('viaticos.csv', 'text/csv;charset=utf-8', '\uFEFF' + [cols.join(','), ...rows].join('\n'));
+  toast('CSV viáticos descargado','success');
+}
+
+async function exportViaticosXLSX() {
+  if (!viatCache.length) { toast('Primero realiza una búsqueda','error'); return; }
+  const cols = ['Fecha','Codigo','Nombre','Departamento','Entrada','Salida','Horas_Extra','Viat_Madrugada','Viat_SalidaTarde'];
+  const data = viatCache.map(r => {
+    const obj = {}; cols.forEach(c => obj[c] = r[c]); return obj;
+  });
+  const ws = XLSX.utils.json_to_sheet(data);
+  // Ancho de columnas
+  ws['!cols'] = [8,10,22,16,10,10,10,16,16].map(w=>({wch:w}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Viáticos');
+  XLSX.writeFile(wb, 'viaticos.xlsx');
+  toast('Excel viáticos descargado','success');
+}
+
+async function exportViaticos_PDF() {
+  if (!viatCache.length) { toast('Primero realiza una búsqueda','error'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:'landscape' });
+  doc.setFontSize(15);
+  doc.setTextColor(79,70,229);
+  doc.text('Reporte de Viáticos Diarios', 14, 16);
+  doc.setFontSize(9); doc.setTextColor(100,100,100);
+  doc.text(`Generado: ${new Date().toLocaleString('es-SV',{timeZone:'America/El_Salvador'})}`, 14, 22);
+  doc.text(`Total registros: ${viatCache.length}  |  Madrugada: ${viatCache.filter(r=>r.Viat_Madrugada==='Sí').length}  |  Salida Tarde: ${viatCache.filter(r=>r.Viat_SalidaTarde==='Sí').length}`, 14, 27);
+
+  const heads = [['Fecha','Código','Nombre','Departamento','Entrada','Salida','H.Extra','Viát. Madrugada','Viát. Salida Tarde']];
+  const rows  = viatCache.map(r => [r.Fecha, r.Codigo, r.Nombre, r.Departamento, r.Entrada, r.Salida,
+    r.Horas_Extra>0?r.Horas_Extra+'h':'—', r.Viat_Madrugada, r.Viat_SalidaTarde]);
+
+  doc.autoTable({
+    head: heads, body: rows, startY: 32,
+    styles:     { fontSize: 8 },
+    headStyles: { fillColor: [79,70,229], textColor: 255, fontStyle:'bold' },
+    alternateRowStyles: { fillColor: [245,245,255] },
+    columnStyles: {
+      7: { cellWidth:28, textColor:[0,120,80], fontStyle:'bold' },
+      8: { cellWidth:28, textColor:[0,100,180], fontStyle:'bold' }
+    }
+  });
+  doc.save('viaticos.pdf');
+  toast('PDF viáticos descargado','success');
+}
+
+async function exportCSV() {
+  const data = await getReportData();
+  if (!data.length) { toast('Sin datos','error'); return; }
+  const headers = Object.keys(data[0]);
+  const rows    = data.map(r => headers.map(h => `"${r[h]}"`).join(','));
+  const csv     = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+  download('reporte.csv', 'text/csv;charset=utf-8', csv);
+  toast('CSV descargado','success');
+}
+
+async function exportXLSX() {
+  const data = await getReportData();
+  if (!data.length) { toast('Sin datos','error'); return; }
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Asistencia');
+  XLSX.writeFile(wb, 'reporte.xlsx');
+  toast('Excel descargado','success');
+}
+
+async function exportPDF() {
+  const data = await getReportData();
+  if (!data.length) { toast('Sin datos','error'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:'landscape' });
+  doc.setFontSize(14);
+  doc.text('Reporte de Asistencia', 14, 16);
+  doc.setFontSize(9);
+  doc.text(`Generado: ${new Date().toLocaleString()}`, 14, 22);
+  const headers = [['Fecha','Código','Nombre','Departamento','Entrada','Salida','H.Normal','H.Extra','Tardanza','Viát.Madrugada','Viát.SalidaTarde','Estado']];
+  const rows    = data.map(r => [r.Fecha,r.Codigo,r.Nombre,r.Departamento,r.Entrada,r.Salida,r.Horas_Normal,r.Horas_Extra,r.Tardanza,r.Viat_Madrugada,r.Viat_SalidaTarde,r.Estado]);
+  doc.autoTable({ head:headers, body:rows, startY:28, styles:{fontSize:8}, headStyles:{fillColor:[79,70,229]} });
+  doc.save('reporte.pdf');
+  toast('PDF descargado','success');
+}
+
+function download(name, type, content) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], {type: type + ';charset=utf-8'}));
+  a.download = name;
+  a.click();
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 14 · USUARIOS
+   ────────────────────────────────────────────── */
+async function loadUsuarios() {
+  // Poblar select de empleados sin usuario asignado aún
+  const emps  = await Store.getAll('empleados');
+  const users = await getUsuariosList();
+  const empConUser = new Set(users.map(u => u.empleadoId).filter(Boolean));
+  const empSin = emps.filter(e => e.estado==='activo' && !empConUser.has(e.id));
+  const sel = document.getElementById('usr-empleado-sel');
+  const prevSel = sel.value;
+  sel.innerHTML = '<option value="">Seleccionar empleado…</option>' +
+    empSin.map(e => `<option value="${e.id}">${e.nombre} (${e.codigo})</option>`).join('');
+  sel.value = prevSel;
+
+  renderUsuariosList(users, emps);
+}
+
+async function getUsuariosList() {
+  if (FB.ok) {
+    try {
+      const snap = await FB.db.collection('usuarios').get();
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {}
+  }
+  return LocalAuth.getUsers();
+}
+
+function renderUsuariosList(users, emps) {
+  const rolColor = { admin:'badge-danger', supervisor:'badge-warn', empleado:'badge-info' };
+  const tbody = document.getElementById('usuarios-tbody');
+  tbody.innerHTML = users.map(u => {
+    const emp     = emps.find(e => e.id===u.empleadoId);
+    const role    = u.role||u.rol||'empleado';
+    const display = u.usuario || u.email || '—';
+    return `<tr>
+      <td><code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:13px">${display}</code></td>
+      <td>${u.name||u.nombre||'—'}</td>
+      <td><span class="badge ${rolColor[role]||'badge-info'}">${role}</span></td>
+      <td>${emp ? `<span class="badge badge-success">${emp.nombre}</span>` : '<span style="color:var(--text2)">—</span>'}</td>
+      <td>${statusBadge(u.estado||'activo')}</td>
+      <td>
+        <button class="btn btn-secondary btn-sm" style="color:var(--danger)" onclick="deleteUsuario('${u.id}','${display}')">
+          <i class="ti ti-trash"></i>
+        </button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text2);padding:16px">Sin usuarios registrados</td></tr>';
+}
+
+// Datos generados pendientes de guardar
+let _pendingUser = null;
+
+function previewUsuario() {
+  const empId  = document.getElementById('usr-empleado-sel').value;
+  const msgEl  = document.getElementById('usr-msg');
+  if (!empId) { msgEl.innerHTML = '<span style="color:var(--danger)">Selecciona un empleado primero.</span>'; return; }
+
+  Store.getById('empleados', empId).then(emp => {
+    if (!emp) return;
+    const usuario = LocalAuth.generarUsuario(emp.nombre);
+    const codigo  = LocalAuth.generarCodigo();
+    _pendingUser  = { empId, nombre: emp.nombre, usuario, codigo, role: document.getElementById('usr-rol').value };
+
+    document.getElementById('usr-preview-usuario').textContent = usuario;
+    document.getElementById('usr-preview-codigo').textContent  = codigo;
+    document.getElementById('usr-preview').style.display       = '';
+    document.getElementById('btn-crear-usuario').disabled      = false;
+    msgEl.innerHTML = '';
+  });
+}
+
+async function crearUsuario() {
+  const msgEl = document.getElementById('usr-msg');
+  if (!_pendingUser) { msgEl.innerHTML = '<span style="color:var(--danger)">Primero genera las credenciales.</span>'; return; }
+
+  const { empId, nombre, usuario, codigo } = _pendingUser;
+  const role = document.getElementById('usr-rol').value;
+  msgEl.innerHTML = '<span style="color:var(--text2)"><i class="ti ti-loader"></i> Guardando acceso…</span>';
+
+  try {
+    const u = await LocalAuth.createUser(nombre, usuario, codigo, role, empId);
+    // Sincronizar a Firestore si está activo (usar SHA-256)
+    if (FB.ok && FB.db) {
+      const codigoHash = await hashCodigo(codigo);
+      await FB.db.collection('usuarios').doc(u.id).set({
+        name: nombre, usuario, codigoHash,
+        role, estado: 'activo', empleadoId: empId
+      });
+    }
+
+    await addAudit('Acceso creado', `${usuario} (${nombre}) — ${role}`, 'ti-user-plus');
+    toast(`Acceso creado para ${nombre}`, 'success');
+    msgEl.innerHTML = `<span style="color:var(--success)">
+      <i class="ti ti-check"></i> Acceso creado.
+      Usuario: <strong>${usuario}</strong> &nbsp;|&nbsp; Código: <strong>${codigo}</strong>
+    </span>`;
+
+    // Reset
+    _pendingUser = null;
+    document.getElementById('usr-preview').style.display  = 'none';
+    document.getElementById('btn-crear-usuario').disabled = true;
+    document.getElementById('usr-empleado-sel').value     = '';
+    await loadUsuarios();
+  } catch(err) {
+    msgEl.innerHTML = `<span style="color:var(--danger)">${err.message||'Error al crear acceso.'}</span>`;
+  }
+}
+
+/* Fix 3: deleteUsuario — borrar de AMBOS stores siempre */
+async function deleteUsuario(uid, email) {
+  if (!confirm(`¿Eliminar acceso de ${email}?`)) return;
+  // Borrar de localStorage siempre
+  const lusers = LocalAuth.getUsers().filter(u => u.id !== uid);
+  LocalAuth.saveUsers(lusers);
+  // Borrar de Firestore siempre (si está disponible)
+  if (FB.ok) {
+    try { await FB.db.collection('usuarios').doc(uid).delete(); } catch {}
+  }
+  await addAudit('Usuario eliminado', email, 'ti-user-minus');
+  toast('Acceso eliminado', 'success');
+  loadUsuarios();
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 15 · AUDITORÍA
+   ────────────────────────────────────────────── */
+async function addAudit(accion, detalle, icon='ti-edit') {
+  const entry = {
+    accion, detalle, icon,
+    usuario: currentUser?.usuario || currentUser?.email || 'sistema',
+    fecha: new Date().toISOString()
+  };
+  await Store.save('auditoria', entry);
+}
+
+async function loadAuditoria() {
+  const logs = (await Store.getAll('auditoria')).sort((a,b) => b.fecha.localeCompare(a.fecha)).slice(0,100);
+  const container = document.getElementById('audit-list');
+  container.innerHTML = logs.map(l => `
+    <div class="audit-item">
+      <i class="ti ${l.icon||'ti-edit'} audit-icon"></i>
+      <div>
+        <strong>${l.accion}</strong>: ${l.detalle}
+        <div class="audit-meta">${l.usuario} · ${new Date(l.fecha).toLocaleString()}</div>
+      </div>
+    </div>`).join('') || '<p class="hint">Sin registros de auditoría</p>';
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 16 · CONFIGURACIÓN FIREBASE
+   ────────────────────────────────────────────── */
+function loadConfiguracion() {
+  const cfg = FB.loadConfig() || {
+    apiKey:            "AIzaSyA_a_TWNTbb_fFZsbKvDbZnAIjWAMF3-t4",
+    authDomain:        "asistencia-app-6cdee.firebaseapp.com",
+    projectId:         "asistencia-app-6cdee",
+    storageBucket:     "asistencia-app-6cdee.firebasestorage.app",
+    messagingSenderId: "407079856798",
+    appId:             "1:407079856798:web:1cc761289aa76bdc2d698f"
+  };
+  ['apiKey','authDomain','projectId','storageBucket','messagingSenderId','appId'].forEach(k => {
+    const el = document.getElementById(`fb-${k}`);
+    if (el) el.value = cfg[k]||'';
+  });
+  updateStorageDetail();
+}
+
+function updateStorageDetail() {
+  const el = document.getElementById('storage-status-detail');
+  const emps  = Store.lsGetAll('empleados').length;
+  const asist = Store.lsGetAll('asistencia').length;
+  const audit = Store.lsGetAll('auditoria').length;
+  const cfg   = FB.loadConfig();
+  el.innerHTML = `
+    <p>📦 <strong>Almacenamiento local (localStorage)</strong></p>
+    <p style="margin-left:16px">Empleados: ${emps} · Asistencias: ${asist} · Auditoría: ${audit}</p>
+    <br>
+    <p>☁️ <strong>Firebase</strong>: ${FB.ok ? `<span style="color:var(--success)">Conectado — Proyecto: <code>${cfg?.projectId||'?'}</code></span>` : '<span style="color:var(--danger)">No configurado / sin conexión</span>'}</p>
+    <br>
+    <p class="hint">El modo híbrido guarda siempre en local. Cuando Firebase está activo, los cambios también se sincronizan en la nube en tiempo real.</p>`;
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 17 · QR
+   ────────────────────────────────────────────── */
+function startQR() {
+  openModal('modal-qr');
+  setTimeout(() => {
+    try {
+      if (qrScanner) { try{ qrScanner.stop(); }catch{} qrScanner=null; }
+      qrScanner = new Html5Qrcode('qr-reader');
+      qrScanner.start({ facingMode:'environment' }, { fps:10, qrbox:250 }, async code => {
+        await qrScanner.stop();
+        qrScanner = null;
+        const tipo = document.getElementById('qr-tipo').value;
+        await marcarPorCodigo(code, tipo);
+        closeModal('modal-qr');
+      }, ()=>{});
+    } catch(e) { toast('No se pudo acceder a la cámara','error'); }
+  }, 300);
+}
+
+async function marcarPorCodigo(codigo, tipo) {
+  const emps = await Store.getAll('empleados');
+  const emp  = emps.find(e => e.codigo===codigo);
+  if (!emp) { toast(`Empleado no encontrado: ${codigo}`,'error'); return; }
+  document.getElementById('asist-empleado').value = emp.id;
+  await marcar(tipo);
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 18 · TEMA
+   ────────────────────────────────────────────── */
+function applyTheme() {
+  const dark = localStorage.getItem('theme')==='dark';
+  document.documentElement.setAttribute('data-theme', dark?'dark':'light');
+  const iconClass = dark ? 'ti ti-sun' : 'ti ti-moon';
+  const ti = document.getElementById('theme-icon');
+  const ai = document.getElementById('auth-theme-icon');
+  if (ti) ti.className = iconClass;
+  if (ai) ai.className = iconClass;
+}
+function toggleTheme() {
+  const dark = document.documentElement.getAttribute('data-theme')==='dark';
+  localStorage.setItem('theme', dark?'light':'dark');
+  applyTheme();
+}
+
+/* ──────────────────────────────────────────────
+   SECCIÓN 19 · EVENT BINDINGS
+   ────────────────────────────────────────────── */
+function bindEvents() {
+
+  // Navegación
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    btn.addEventListener('click', () => navigateTo(btn.dataset.view));
+  });
+  document.getElementById('btn-menu').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('open');
+  });
+
+  // Tema
+  document.getElementById('btn-theme').addEventListener('click', toggleTheme);
+  document.getElementById('auth-theme-btn').addEventListener('click', toggleTheme);
+
+  // ── AUTH ──
+  // Toggle mostrar/ocultar código
+  document.getElementById('btn-toggle-pass').addEventListener('click', () => {
+    const inp  = document.getElementById('login-pass');
+    const icon = document.getElementById('toggle-pass-icon');
+    if (inp.type === 'password') { inp.type='text';  icon.className='ti ti-eye-off'; }
+    else                         { inp.type='password'; icon.className='ti ti-eye'; }
+  });
+
+  document.getElementById('form-login').addEventListener('submit', async e => {
+    e.preventDefault();
+    const usuario = document.getElementById('login-usuario').value.toLowerCase().trim();
+    const codigo  = document.getElementById('login-pass').value.trim();
+    const errEl   = document.getElementById('login-error');
+    errEl.textContent = '';
+    try {
+      // Siempre usamos auth local con usuario/código
+      // (Firebase Auth requiere email — guardamos usuarios en Firestore/localStorage)
+      currentUser = await loginUsuarioCodigo(usuario, codigo);
+      showApp();
+    } catch(err) {
+      errEl.textContent = err.message || 'Usuario o código incorrecto';
+    }
+  });
+
+  document.getElementById('btn-setup-admin').addEventListener('click', async () => {
+    const name    = document.getElementById('setup-name').value.trim();
+    const usuario = document.getElementById('setup-usuario').value.toLowerCase().trim();
+    const pass    = document.getElementById('setup-pass').value;
+    if (!name||!usuario||!pass) { toast('Completa todos los campos','error'); return; }
+    if (pass.length < 6)        { toast('El código debe tener al menos 6 caracteres','error'); return; }
+    try {
+      currentUser = await LocalAuth.createUser(name, usuario, pass, 'admin', null);
+      // Sincronizar a Firestore si Firebase está activo
+      if (FB.ok && FB.db) {
+        const codigoHash = await hashCodigo(pass);
+        await FB.db.collection('usuarios').doc(currentUser.id).set({
+          name, usuario, codigoHash, role:'admin', estado:'activo', empleadoId: null
+        });
+      }
+      LocalAuth.setSession(currentUser);
+      document.getElementById('setup-panel').style.display='none';
+      toast('Administrador creado','success');
+      showApp();
+    } catch(err) { toast(err.message,'error'); }
+  });
+
+  document.getElementById('btn-logout').addEventListener('click', async () => {
+    LocalAuth.clearSession();
+    currentUser = null;
+    showAuthScreen();
+    toast('Sesión cerrada','info');
+  });
+
+  // ── EMPLEADOS ──
+  document.getElementById('btn-nuevo-empleado').addEventListener('click', () => editEmpleado(null));
+  document.getElementById('emp-search').addEventListener('input',  async () => { empPage=1; renderEmpleados(await Store.getAll('empleados')); });
+  document.getElementById('filt-dept-emp').addEventListener('change', async () => { empPage=1; renderEmpleados(await Store.getAll('empleados')); });
+  document.getElementById('filt-estado-emp').addEventListener('change', async () => { empPage=1; renderEmpleados(await Store.getAll('empleados')); });
+  document.getElementById('btn-emp-prev').addEventListener('click', async () => { if(empPage>1){empPage--;renderEmpleados(await Store.getAll('empleados'));} });
+  document.getElementById('btn-emp-next').addEventListener('click', async () => { empPage++;renderEmpleados(await Store.getAll('empleados')); });
+
+  document.getElementById('form-empleado').addEventListener('submit', async e => {
+    e.preventDefault();
+    const emp = {
+      id:      document.getElementById('emp-id').value || undefined,
+      codigo:  document.getElementById('emp-codigo').value.trim(),
+      nombre:  document.getElementById('emp-nombre').value.trim(),
+      cargo:   document.getElementById('emp-cargo').value.trim(),
+      depto:   document.getElementById('emp-depto').value.trim(),
+      tel:     document.getElementById('emp-tel').value.trim(),
+      correo:  document.getElementById('emp-correo').value.trim(),
+      ingreso: document.getElementById('emp-ingreso').value,
+      estado:  document.getElementById('emp-estado').value,
+      foto:    document.getElementById('emp-foto-data').value,
+    };
+    updateSyncBadge('syncing');
+    await Store.save('empleados', emp);
+    updateSyncBadge(FB.ok?'online':'offline');
+    await addAudit(emp.id?'Empleado editado':'Empleado creado', emp.nombre, 'ti-user');
+    toast('Empleado guardado','success');
+    closeModal('modal-empleado');
+    loadEmpleados();
+  });
+
+  document.getElementById('emp-foto').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      document.getElementById('emp-foto-data').value = ev.target.result;
+      const prev = document.getElementById('emp-foto-preview');
+      prev.src = ev.target.result;
+      prev.classList.remove('hidden');
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // ── ASISTENCIA ──
+  document.getElementById('btn-entrada').addEventListener('click', () => marcar('entrada'));
+  document.getElementById('btn-salida').addEventListener('click',  () => marcar('salida'));
+  document.getElementById('btn-scan-qr').addEventListener('click', startQR);
+  document.getElementById('asist-empleado').addEventListener('change', actualizarBannerAsistencia);
+
+  // ── HISTORIAL ──
+  document.getElementById('btn-buscar-historial').addEventListener('click', () => { histPage=1; loadHistorial(); });
+  document.getElementById('btn-hist-prev').addEventListener('click', () => { if(histPage>1){histPage--;loadHistorial();} });
+  document.getElementById('btn-hist-next').addEventListener('click', () => { histPage++;loadHistorial(); });
+  document.getElementById('btn-hist-csv').addEventListener('click',  exportHistCSV);
+  document.getElementById('btn-hist-xlsx').addEventListener('click', exportHistXLSX);
+  document.getElementById('btn-hist-pdf').addEventListener('click',  exportHistPDF);
+
+  // ── REPORTES ──
+  document.getElementById('btn-rep-csv').addEventListener('click',  exportCSV);
+  document.getElementById('btn-rep-xlsx').addEventListener('click', exportXLSX);
+  document.getElementById('btn-rep-pdf').addEventListener('click',  exportPDF);
+
+  // ── USUARIOS ──
+  document.getElementById('btn-preview-usuario').addEventListener('click', previewUsuario);
+  document.getElementById('btn-crear-usuario').addEventListener('click', crearUsuario);
+  // Regenerar al cambiar rol o empleado
+  document.getElementById('usr-empleado-sel').addEventListener('change', () => {
+    _pendingUser = null;
+    document.getElementById('usr-preview').style.display  = 'none';
+    document.getElementById('btn-crear-usuario').disabled = true;
+    document.getElementById('usr-msg').innerHTML = '';
+  });
+
+  // ── VIÁTICOS ──
+  document.getElementById('btn-buscar-viaticos').addEventListener('click', buscarViaticos);
+  document.getElementById('btn-viat-prev').addEventListener('click', () => { if(viatPage>1){viatPage--;renderViaticosTabla();} });
+  document.getElementById('btn-viat-next').addEventListener('click', () => { viatPage++;renderViaticosTabla(); });
+  document.getElementById('btn-viat-csv').addEventListener('click',  exportViaticosCSV);
+  document.getElementById('btn-viat-xlsx').addEventListener('click', exportViaticosXLSX);
+  document.getElementById('btn-viat-pdf').addEventListener('click',  exportViaticos_PDF);
+
+  // ── QR modal ──
+  document.getElementById('btn-close-qr').addEventListener('click', () => {
+    if (qrScanner) { try{ qrScanner.stop(); }catch{} qrScanner=null; }
+    closeModal('modal-qr');
+  });
+  document.getElementById('btn-qr-manual').addEventListener('click', async () => {
+    const codigo = document.getElementById('qr-manual-codigo').value.trim();
+    const tipo   = document.getElementById('qr-tipo').value;
+    if (!codigo) return;
+    await marcarPorCodigo(codigo, tipo);
+    closeModal('modal-qr');
+  });
+
+  // ── MODALES — cerrar con X o click fuera ──
+  document.querySelectorAll('.modal-close').forEach(btn => {
+    btn.addEventListener('click', () => btn.closest('.modal').classList.remove('open'));
+  });
+  document.querySelectorAll('.modal').forEach(m => {
+    m.addEventListener('click', e => { if(e.target===m) m.classList.remove('open'); });
+  });
+
+  // ── CONFIGURACIÓN FIREBASE ──
+  document.getElementById('btn-save-firebase').addEventListener('click', async () => {
+    const cfg = {
+      apiKey:            document.getElementById('fb-apiKey').value.trim(),
+      authDomain:        document.getElementById('fb-authDomain').value.trim(),
+      projectId:         document.getElementById('fb-projectId').value.trim(),
+      storageBucket:     document.getElementById('fb-storageBucket').value.trim(),
+      messagingSenderId: document.getElementById('fb-messagingSenderId').value.trim(),
+      appId:             document.getElementById('fb-appId').value.trim(),
+    };
+    if (!cfg.apiKey || !cfg.projectId) { toast('API Key y Project ID son obligatorios','error'); return; }
+    document.getElementById('fb-status').textContent = 'Conectando…';
+    const ok = await FB.init(cfg);
+    useFirebase = ok;
+    if (ok) {
+      updateSyncBadge('online');
+      toast('Firebase conectado correctamente','success');
+      document.getElementById('fb-status').innerHTML = '<span style="color:var(--success)"><i class="ti ti-check"></i> Conectado</span>';
+    } else {
+      updateSyncBadge('offline');
+      toast('No se pudo conectar a Firebase. Revisa los datos.','error');
+      document.getElementById('fb-status').innerHTML = '<span style="color:var(--danger)">Error de conexión</span>';
+    }
+    updateStorageDetail();
+  });
+
+  document.getElementById('btn-test-firebase').addEventListener('click', async () => {
+    if (!FB.ok) { toast('Firebase no inicializado','error'); return; }
+    document.getElementById('fb-status').textContent = 'Probando…';
+    const ok = await FB.testConnection();
+    if (ok) { toast('Conexión exitosa','success'); document.getElementById('fb-status').innerHTML='<span style="color:var(--success)">Conexión OK</span>'; }
+    else     { toast('Error al conectar','error');  document.getElementById('fb-status').innerHTML='<span style="color:var(--danger)">Sin respuesta</span>'; }
+  });
+
+  document.getElementById('btn-clear-firebase').addEventListener('click', () => {
+    if (!confirm('¿Limpiar configuración de Firebase? La app usará solo almacenamiento local.')) return;
+    FB.clearConfig();
+    useFirebase = false;
+    updateSyncBadge('offline');
+    ['apiKey','authDomain','projectId','storageBucket','messagingSenderId','appId'].forEach(k => {
+      const el = document.getElementById(`fb-${k}`);
+      if (el) el.value = '';
+    });
+    document.getElementById('fb-status').textContent = 'Configuración eliminada';
+    updateStorageDetail();
+    toast('Configuración de Firebase eliminada','info');
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   PWA — Manifest + Service Worker (inyectados en runtime para
+   funcionar desde un único archivo HTML sin build step)
+   ══════════════════════════════════════════════════════════════════ */
+(function initPWA() {
+  /* ── 1. Icono SVG inline ── */
+  function _pwaIconSVG(size) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+      <rect width="${size}" height="${size}" rx="${size*0.2}" fill="#4f46e5"/>
+      <text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle"
+        font-family="system-ui,sans-serif" font-size="${size*0.44}" fill="white">⏱</text>
+    </svg>`;
+    return 'data:image/svg+xml,' + encodeURIComponent(svg);
+  }
+
+  /* ── 2. Manifest inline (Blob URL) ── */
+  const manifest = {
+    name:             'Control de Asistencia RR.HH.',
+    short_name:       'Asistencia',
+    description:      'Sistema de control de asistencia para recursos humanos',
+    start_url:        './',
+    display:          'standalone',
+    background_color: '#f8f7ff',
+    theme_color:      '#4f46e5',
+    orientation:      'portrait-primary',
+    icons: [
+      { src: _pwaIconSVG(192), sizes:'192x192', type:'image/svg+xml', purpose:'any maskable' },
+      { src: _pwaIconSVG(512), sizes:'512x512', type:'image/svg+xml', purpose:'any maskable' }
+    ],
+    shortcuts: [
+      { name:'Marcar Entrada', short_name:'Entrada', url:'./#asistencia', description:'Registrar entrada' },
+      { name:'Historial',      short_name:'Historial', url:'./#historial', description:'Ver historial' }
+    ],
+    categories: ['business','productivity'],
+    lang: 'es-SV'
+  };
+  const manifestBlob = new Blob([JSON.stringify(manifest)], { type:'application/json' });
+  const manifestLink = Object.assign(document.createElement('link'), { rel:'manifest', href: URL.createObjectURL(manifestBlob) });
+  document.head.appendChild(manifestLink);
+
+  /* Apple touch icon */
+  document.head.appendChild(Object.assign(document.createElement('link'), { rel:'apple-touch-icon', href: _pwaIconSVG(180) }));
+
+  /* ── 3. Service Worker (Cache-first CDN, Network-first shell) ── */
+  if (!('serviceWorker' in navigator)) return;
+
+  const SW_VER   = 'rrhh-sw-v1';
+  const PRELOAD  = ['./', location.href];
+
+  const swCode = `
+const CACHE   = '${SW_VER}';
+const PRELOAD = ${JSON.stringify(PRELOAD)};
+
+self.addEventListener('install', e => {
+  self.skipWaiting();
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(PRELOAD).catch(()=>{})));
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', e => {
+  const url = e.request.url;
+  // Nunca interceptar Firebase/Firestore ni no-GET
+  if (e.request.method !== 'GET' ||
+      url.includes('firestore.googleapis.com') ||
+      url.includes('googleapis.com') ||
+      url.includes('firebase') ||
+      url.includes('gstatic.com/firebasejs')) return;
+
+  // CDNs: Cache-first + revalidar en background
+  if (/cdn\\.|cdnjs\\.|unpkg\\.|jsdelivr\\.|gstatic\\./.test(url)) {
+    e.respondWith(caches.open(CACHE).then(async cache => {
+      const hit = await cache.match(e.request);
+      const net = fetch(e.request).then(r => { if(r.ok) cache.put(e.request,r.clone()); return r; }).catch(()=>hit);
+      return hit || net;
+    }));
+    return;
+  }
+
+  // Shell HTML/JS: Network-first, fallback cache
+  e.respondWith(
+    fetch(e.request)
+      .then(r => { if(r.ok) caches.open(CACHE).then(c=>c.put(e.request,r.clone())); return r; })
+      .catch(() => caches.match(e.request))
+  );
+});
+
+self.addEventListener('message', e => { if(e.data==='skipWaiting') self.skipWaiting(); });
+`;
+
+  const swURL = URL.createObjectURL(new Blob([swCode], { type:'application/javascript' }));
+
+  navigator.serviceWorker.register(swURL, { scope:'./' }).then(reg => {
+    console.log('[SW] registrado — scope:', reg.scope);
+    reg.addEventListener('updatefound', () => {
+      const sw = reg.installing;
+      sw.addEventListener('statechange', () => {
+        if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+          toast('Nueva versión disponible — recarga para actualizar', 'info');
+        }
+      });
+    });
+  }).catch(e => console.warn('[SW] registro omitido (normal en file://):', e.message));
+
+  /* ── 4. Botón "Instalar app" ── */
+  let _dip = null;
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault(); _dip = e;
+    const btn = document.getElementById('btn-install-pwa');
+    if (btn) btn.style.display = '';
+  });
+  window.addEventListener('appinstalled', () => {
+    _dip = null;
+    const btn = document.getElementById('btn-install-pwa');
+    if (btn) btn.style.display = 'none';
+    toast('¡App instalada correctamente en tu dispositivo!', 'success');
+  });
+  window._installPWA = async () => {
+    if (!_dip) return;
+    _dip.prompt();
+    const { outcome } = await _dip.userChoice;
+    if (outcome === 'accepted') _dip = null;
+  };
+})();
+</script>
+</body>
+</html>
