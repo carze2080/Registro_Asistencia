@@ -419,6 +419,8 @@ a{color:var(--primary);text-decoration:none}
       <button type="button" class="btn btn-primary btn-block" id="btn-setup-admin"><i class="ti ti-user-shield"></i> Crear administrador</button>
       <p id="setup-admin-status" class="hint" style="margin-top:8px"></p>
     </div>
+    <button type="button" class="btn btn-secondary btn-block" id="btn-clear-local-login" style="margin-top:12px;color:var(--danger)"><i class="ti ti-trash"></i> Borrar Local Store y empezar de cero</button>
+    <p class="hint" style="margin-top:6px;text-align:center">No modifica Firestore ni Firebase Authentication.</p>
   </div>
 </div>
 
@@ -1034,6 +1036,12 @@ a{color:var(--primary);text-decoration:none}
           </div>
           <p class="hint" style="margin-top:10px">Las fotografías y documentos se guardan en Firebase Storage cuando está disponible; sin conexión se conserva una copia local temporal.</p>
         </div>
+        <div class="card" style="border-color:#fecaca">
+          <div class="card-title" style="color:var(--danger)"><i class="ti ti-database-x"></i> Limpiar Local Store</div>
+          <p class="hint">Borra los usuarios, registros y configuraciones guardados solamente en este navegador. Conserva la configuración de conexión y no elimina ningún documento de Firestore ni cuenta de Firebase Authentication.</p>
+          <button type="button" class="btn btn-danger" id="btn-clear-local-config"><i class="ti ti-alert-triangle"></i> Borrar Local Store</button>
+          <p id="clear-local-status" class="hint" style="margin-top:10px"></p>
+        </div>
       </section>
 
     </main>
@@ -1616,12 +1624,12 @@ const LocalAuth = (() => {
   }
 
   function logout()     { clearSession(); }
-  function hasAdmins()  { return getUsers().some(u => u.role==='admin'); }
+  function hasAdmins()  { return getUsers().some(u => (u.role||u.rol)==='admin'); }
   function isLegacySeedUser(u) {
     return !!u && u.id === 'usr001' && u.usuario === 'cdavid';
   }
   function hasSecureAdmins() {
-    return getUsers().some(u => u.role === 'admin' && !isLegacySeedUser(u));
+    return getUsers().some(u => (u.role||u.rol) === 'admin' && !isLegacySeedUser(u));
   }
 
   return {
@@ -1658,6 +1666,12 @@ function identidadFirebaseParaLogin(usuario) {
   return emailInternoAuth(key);
 }
 
+function normalizarPerfilUsuario(usuario) {
+  if(!usuario)return usuario;
+  const role=usuario.role||usuario.rol||'empleado';
+  return {...usuario,role,rol:role};
+}
+
 /* ──────────────────────────────────────────────
    SECCIÓN 3.5 · LOGIN POR USUARIO + CÓDIGO
    Busca en Firestore o localStorage según disponibilidad
@@ -1679,7 +1693,7 @@ async function loginUsuarioCodigo(usuario, codigo) {
       if (!key.includes('@') && normalizarUsuarioAuth(data.usuario) !== normalizarUsuarioAuth(key)) {
         throw new Error('La identidad no coincide con el perfil asignado');
       }
-      const u = { id:snap.id || credential.user.uid, ...data, email:data.email||'', authEmail:authIdentity, authUid:credential.user.uid };
+      const u = normalizarPerfilUsuario({ ...data, id:snap.id || credential.user.uid, email:data.email||'', authEmail:authIdentity, authUid:credential.user.uid });
       const offlineHash = await crearHashCodigoSeguro(codigo);
       const lusers = LocalAuth.getUsers();
       const li = lusers.findIndex(x => x.id === u.id);
@@ -1722,7 +1736,7 @@ async function loginUsuarioCodigo(usuario, codigo) {
         const storedHash = data.codigoHash || data.pass;
         const hashOk = await verificarCodigoSeguro(codigo,storedHash);
         if (hashOk) {
-          const u = { id: doc.id, ...data };
+          const u = normalizarPerfilUsuario({ ...data, id:doc.id });
           let hashActual=storedHash;
           // Migración automática de SHA-256/btoa a PBKDF2.
           if (!String(storedHash||'').startsWith('pbkdf2$')) {
@@ -1757,7 +1771,7 @@ async function loginUsuarioCodigo(usuario, codigo) {
 
   // 3. Fallback offline (acepta usuario, email, y pass antigua)
   try {
-    const u = await LocalAuth.login(key, codigo);
+    const u = normalizarPerfilUsuario(await LocalAuth.login(key, codigo));
     AuthGuard.success(key);
     return u;
   } catch(e) {
@@ -1772,7 +1786,16 @@ async function loginUsuarioCodigo(usuario, codigo) {
 let currentUser  = null;    // usuario activo
 let _authLoginInProgress = false;
 let _adminPrincipalUid = null;
-let _adminFirebaseEstado = { verificado:false, existe:false, principalUid:null, admins:[] };
+let _adminFirebaseEstado = { verificado:false, existe:false, principalUid:null, principalIds:[], admins:[] };
+
+function idsPerfilUsuario(usuario) {
+  return [...new Set([usuario?.authUid,usuario?.firestoreId,usuario?.id].filter(Boolean).map(String))];
+}
+
+function perfilesMismaIdentidad(a,b) {
+  const idsB=new Set(idsPerfilUsuario(b));
+  return idsPerfilUsuario(a).some(id=>idsB.has(id));
+}
 
 function resolverAdminPrincipal(usuarios=[]) {
   const admins = usuarios.filter(u => (u.role||u.rol) === 'admin' && (u.estado||'activo') === 'activo');
@@ -1783,8 +1806,10 @@ function resolverAdminPrincipal(usuarios=[]) {
   });
   const marcado = ordenados.find(u => u.adminPrincipal === true || u.esAdminPrincipal === true);
   const principal = marcado || ordenados[0] || null;
-  _adminPrincipalUid = principal?.id || principal?.authUid || null;
-  return { admins, principal, principalUid:_adminPrincipalUid };
+  const principalIds=idsPerfilUsuario(principal);
+  const uidAutenticado=FB.auth?.currentUser?.uid||null;
+  _adminPrincipalUid = (uidAutenticado&&principalIds.includes(uidAutenticado)?uidAutenticado:null) || principal?.authUid || principal?.firestoreId || principal?.id || null;
+  return { admins, principal, principalUid:_adminPrincipalUid, principalIds };
 }
 
 function normalizarAdminPrincipalLocal() {
@@ -1792,15 +1817,19 @@ function normalizarAdminPrincipalLocal() {
   const {principal} = resolverAdminPrincipal(users);
   if (!principal) return;
   users.forEach(u => {
-    if ((u.role||u.rol) === 'admin') u.adminPrincipal = u.id === principal.id;
+    if ((u.role||u.rol) === 'admin') u.adminPrincipal = perfilesMismaIdentidad(u,principal);
   });
   LocalAuth.saveUsers(users);
 }
 
 function esAdminPrincipalActual() {
-  if (!currentUser || currentUser.role !== 'admin') return false;
+  if (!currentUser || (currentUser.role||currentUser.rol) !== 'admin') return false;
+  const remoto=_adminFirebaseEstado?.admins?.find(u=>
+    u.adminPrincipal===true||u.esAdminPrincipal===true||idsPerfilUsuario(u).includes(_adminPrincipalUid)
+  );
   return currentUser.adminPrincipal === true || currentUser.esAdminPrincipal === true ||
-    (!!_adminPrincipalUid && (currentUser.id === _adminPrincipalUid || currentUser.authUid === _adminPrincipalUid));
+    (!!remoto&&perfilesMismaIdentidad(currentUser,remoto)) ||
+    (!!_adminPrincipalUid && idsPerfilUsuario(currentUser).includes(String(_adminPrincipalUid)));
 }
 
 function requireAdminPrincipal() {
@@ -1810,14 +1839,15 @@ function requireAdminPrincipal() {
 }
 
 async function consultarAdministradoresFirebase() {
-  if (!FB.db) return { verificado:false, existe:false, principalUid:null, admins:[] };
+  if (!FB.db) return { verificado:false, existe:false, principalUid:null, principalIds:[], admins:[] };
   try {
     const snap = await FB.db.collection('usuarios').get({source:'server'});
-    const usuarios = snap.docs.map(d => ({id:d.id,...d.data()}));
-    const {admins,principal,principalUid} = resolverAdminPrincipal(usuarios);
-    _adminFirebaseEstado = { verificado:true, existe:admins.length>0, principalUid, admins };
-    if (currentUser && currentUser.role==='admin') {
-      const coincide=!!principal && (currentUser.id===principalUid || currentUser.authUid===principalUid);
+    const usuarios = snap.docs.map(d => ({...d.data(),id:d.id,firestoreId:d.id}));
+    const {admins,principal,principalUid,principalIds} = resolverAdminPrincipal(usuarios);
+    _adminFirebaseEstado = { verificado:true, existe:admins.length>0, principalUid, principalIds, admins };
+    if (currentUser && (currentUser.role||currentUser.rol)==='admin') {
+      currentUser=normalizarPerfilUsuario(currentUser);
+      const coincide=!!principal && perfilesMismaIdentidad(currentUser,principal);
       currentUser.adminPrincipal=coincide;
       const locales=LocalAuth.getUsers();
       const local=locales.find(u=>u.id===currentUser.id||u.authUid===currentUser.authUid);
@@ -1827,22 +1857,24 @@ async function consultarAdministradoresFirebase() {
     return _adminFirebaseEstado;
   } catch(e) {
     console.warn('No se pudo verificar el administrador principal:',e.message);
-    _adminFirebaseEstado = { verificado:false, existe:false, principalUid:null, admins:[] };
+    _adminFirebaseEstado = { verificado:false, existe:false, principalUid:null, principalIds:[], admins:[] };
     return _adminFirebaseEstado;
   }
 }
 
 async function refrescarAdminPrincipalActual() {
   const estado = await consultarAdministradoresFirebase();
-  if (!estado.verificado || !currentUser || currentUser.role!=='admin') return;
-  const esPrincipal = currentUser.id===estado.principalUid || currentUser.authUid===estado.principalUid;
+  if (!estado.verificado || !currentUser || (currentUser.role||currentUser.rol)!=='admin') return;
+  const principal=estado.admins.find(u=>estado.principalIds.includes(String(u.authUid||''))||estado.principalIds.includes(String(u.id||'')));
+  const esPrincipal = !!principal&&perfilesMismaIdentidad(currentUser,principal);
   currentUser.adminPrincipal=esPrincipal;
   const locales=LocalAuth.getUsers();
   const local=locales.find(u=>u.id===currentUser.id||u.authUid===currentUser.authUid);
   if(local){local.adminPrincipal=esPrincipal;LocalAuth.saveUsers(locales);LocalAuth.setSession(currentUser);}
-  const remoto=estado.admins.find(u=>u.id===estado.principalUid);
-  if(esPrincipal && remoto?.adminPrincipal!==true && FB.auth?.currentUser?.uid===estado.principalUid){
-    try{await FB.db.collection('usuarios').doc(estado.principalUid).update({adminPrincipal:true});}catch(e){console.warn('No se pudo marcar el administrador principal:',e.message);}
+  const remoto=principal;
+  const remotoDocId=remoto?.firestoreId||remoto?.id;
+  if(esPrincipal && remoto?.adminPrincipal!==true && estado.principalIds.includes(FB.auth?.currentUser?.uid||'')){
+    try{await FB.db.collection('usuarios').doc(remotoDocId).update({adminPrincipal:true,authUid:FB.auth.currentUser.uid});}catch(e){console.warn('No se pudo marcar el administrador principal:',e.message);}
   }
 }
 
@@ -1890,6 +1922,36 @@ function aplicarInicioLimpio() {
 
   localStorage.setItem(KEY_DONE, new Date().toISOString());
   console.log('Inicio limpio aplicado: sin empleados ni historial precargado.');
+}
+
+const APP_VERSION = 12;
+const APP_VERSION_KEY = 'carze_version_instalada';
+
+function limpiarLocalStorePorNuevaVersion() {
+  const anterior=Number(localStorage.getItem(APP_VERSION_KEY)||0);
+  if(anterior>=APP_VERSION)return {realizada:false,anterior,actual:APP_VERSION,eliminados:0};
+  const claves=[];
+  for(let i=0;i<localStorage.length;i++)claves.push(localStorage.key(i));
+  const borrar=claves.filter(key=>key&&(
+    key.startsWith('rrhh_') || (key.startsWith('carze_')&&key!==APP_VERSION_KEY)
+  ));
+  borrar.forEach(key=>localStorage.removeItem(key));
+  sessionStorage.removeItem('rrhh_session');
+  localStorage.setItem(APP_VERSION_KEY,String(APP_VERSION));
+  return {realizada:true,anterior,actual:APP_VERSION,eliminados:borrar.length};
+}
+
+async function comprobarUltimaVersion() {
+  try{
+    const respuesta=await fetch(`./version.json?t=${Date.now()}`,{cache:'no-store'});
+    if(!respuesta.ok)return;
+    const remota=await respuesta.json();
+    const ultima=Number(remota.version||0);
+    if(ultima<=APP_VERSION)return;
+    const registro=await navigator.serviceWorker?.getRegistration('./');
+    if(registro)await registro.update();
+    toast(`Nueva versión ${ultima} encontrada. Se instalará al recargar.`, 'info', 8000);
+  }catch(error){console.warn('No se pudo comprobar la versión más reciente:',error.message);}
 }
 let useFirebase  = false;   // ¿Firebase activo?
 let firebaseInitPromise = Promise.resolve(false);
@@ -1947,6 +2009,7 @@ const VIEW_ROLES = {
 };
 
 function requireRole(roles, notify=true) {
+  if(currentUser)currentUser=normalizarPerfilUsuario(currentUser);
   const ok = !!currentUser && roles.includes(currentUser.role);
   if (!ok && notify) toast('No tienes permiso para realizar esta acción', 'error');
   return ok;
@@ -2004,11 +2067,16 @@ function statusBadge(est) {
 document.addEventListener('DOMContentLoaded', () => {
   // ── Arranque inmediato — NUNCA bloquear con awaits externos ──
   applyTheme();
-  aplicarInicioLimpio();  // elimina residuos locales de la instalación anterior
+  const limpiezaVersion=limpiarLocalStorePorNuevaVersion();
+  if(!limpiezaVersion.realizada)aplicarInicioLimpio();
   normalizarAdminPrincipalLocal();
   tryLocalSession();      // muestra login o app de inmediato
   showLoader(false);      // quitar loader YA
   bindEvents();
+  if(limpiezaVersion.realizada){
+    setTimeout(()=>toast(`Versión ${APP_VERSION} instalada: Local Store anterior eliminado una sola vez. Firebase se conservó.`,'info',9000),300);
+  }
+  comprobarUltimaVersion();
 
   // ── Firebase en segundo plano — no bloquea el arranque ──
   const FB_CONFIG = FB.loadConfig() || {
@@ -2076,7 +2144,7 @@ function tryLocalSession() {
   const known = sess && LocalAuth.getUsers().find(u => u.id === sess.id && u.estado === 'activo');
   if (known) {
     // El rol y el empleado vinculado se toman del registro, no de sessionStorage.
-    currentUser = { ...sess, role: known.role, empleadoId: known.empleadoId, estado: known.estado };
+    currentUser = normalizarPerfilUsuario({ ...sess, ...known });
     LocalAuth.setSession(currentUser);
     showApp();
   } else {
@@ -2095,6 +2163,7 @@ function showAuthScreen() {
   document.getElementById('app-layout').classList.add('hidden');
 }
 function showApp() {
+  currentUser=normalizarPerfilUsuario(currentUser);
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app-layout').classList.remove('hidden');
   document.getElementById('user-info').textContent = `${currentUser.name||currentUser.nombre||''} · @${currentUser.usuario||currentUser.email||''} · ${currentUser.role}`;
@@ -4140,7 +4209,7 @@ async function loadUsuarios() {
   }else if(!firebaseUid){
     estadoEl.className='location-alert outside';
     estadoEl.textContent='La sesión actual es solamente local. Cierra sesión y vuelve a entrar con el usuario o correo del administrador principal para activar Firebase.';
-  }else if(estadoRemoto.verificado && firebaseUid===estadoRemoto.principalUid && puedeAdministrar){
+  }else if(estadoRemoto.verificado && estadoRemoto.principalIds.includes(firebaseUid) && puedeAdministrar){
     estadoEl.className='location-alert inside';
     estadoEl.textContent='Firebase listo: los nuevos accesos se guardarán en Authentication y en la colección usuarios.';
   }else{
@@ -4287,7 +4356,7 @@ async function validarAdminFirebaseParaUsuarios() {
       throw new Error('El perfil de Firebase no está marcado como administrador principal. En Configuración, vuelve a vincularlo antes de publicar las reglas estrictas.');
     }
   }
-  if(_adminPrincipalUid && authUser.uid!==_adminPrincipalUid)throw new Error('La sesión de Firebase pertenece a otro usuario, no al administrador principal.');
+  if(_adminFirebaseEstado.verificado&&_adminFirebaseEstado.existe&&!_adminFirebaseEstado.principalIds.includes(authUser.uid))throw new Error('La sesión de Firebase pertenece a otro usuario, no al administrador principal.');
   currentUser.authUid=authUser.uid;
   currentUser.adminPrincipal=true;
   _adminPrincipalUid=authUser.uid;
@@ -4649,6 +4718,26 @@ async function restaurarRespaldo(file) {
   await addAudit('Respaldo restaurado',`Archivo ${file.name}`,'ti-database-import'); toast('Respaldo restaurado. Recarga la app para aplicar todos los datos.','success',7000); updateStorageDetail();
 }
 
+function limpiarLocalStoreCompleto() {
+  const status=document.getElementById('clear-local-status');
+  const palabra=prompt('Se borrarán los datos guardados en este navegador. Firebase no será modificado. Escribe BORRAR para continuar:');
+  if(palabra!=='BORRAR'){
+    if(status)status.textContent='Limpieza cancelada.';
+    return;
+  }
+  const claves=[];
+  for(let i=0;i<localStorage.length;i++)claves.push(localStorage.key(i));
+  const borrar=claves.filter(key=>key&&(
+    key.startsWith('rrhh_') || key.startsWith('carze_')
+  ));
+  borrar.forEach(key=>localStorage.removeItem(key));
+  sessionStorage.removeItem('rrhh_session');
+  currentUser=null;
+  if(status)status.textContent=`Se eliminaron ${borrar.length} elementos locales. Recargando…`;
+  toast('Local Store borrado. Firebase se conserva.','success',5000);
+  setTimeout(()=>location.reload(),700);
+}
+
 function descargarReglasRecomendadas() {
   if(!requireRole(['admin']))return;
   const reglas=`// FIRESTORE RULES — publicar desde Firebase Console
@@ -4718,7 +4807,7 @@ async function vincularAdminFirebaseAuth(){
     if(antes.verificado && antes.existe){
       administradorExistente=true;
       credential=await FB.auth.signInWithEmailAndPassword(email,pass);
-      if(credential.user.uid!==antes.principalUid){await FB.auth.signOut().catch(()=>{});throw new Error('Ya existe otro administrador principal. No se permite registrar uno adicional.');}
+      if(!antes.principalIds.includes(credential.user.uid)){await FB.auth.signOut().catch(()=>{});throw new Error('Ya existe otro administrador principal. No se permite registrar uno adicional.');}
     }else if(antes.verificado){
       try{credential=await FB.auth.createUserWithEmailAndPassword(email,pass);}catch(e){if(e.code==='auth/email-already-in-use')credential=await FB.auth.signInWithEmailAndPassword(email,pass);else throw e;}
     }else{
@@ -4727,7 +4816,7 @@ async function vincularAdminFirebaseAuth(){
       try{credential=await FB.auth.signInWithEmailAndPassword(email,pass);}
       catch{throw new Error('Firebase no permitió comprobar usuarios. Inicia sesión con la cuenta del administrador principal existente.');}
       const despues=await consultarAdministradoresFirebase();
-      if(!despues.verificado||!despues.existe||credential.user.uid!==despues.principalUid){
+      if(!despues.verificado||!despues.existe||!despues.principalIds.includes(credential.user.uid)){
         await FB.auth.signOut().catch(()=>{});
         throw new Error('La cuenta ingresada no corresponde al administrador principal de Firebase.');
       }
@@ -5016,6 +5105,8 @@ function bindEvents() {
   document.getElementById('btn-guardar-calendario').addEventListener('click', guardarCalendarioLaboral);
   document.getElementById('btn-export-backup').addEventListener('click', exportarRespaldo);
   document.getElementById('btn-resolver-conflictos').addEventListener('click', resolverConflictosSync);
+  document.getElementById('btn-clear-local-login').addEventListener('click', limpiarLocalStoreCompleto);
+  document.getElementById('btn-clear-local-config').addEventListener('click', limpiarLocalStoreCompleto);
   document.getElementById('input-import-backup').addEventListener('change', e=>{const file=e.target.files[0];restaurarRespaldo(file).finally(()=>{e.target.value='';});});
   document.getElementById('btn-descargar-reglas').addEventListener('click', descargarReglasRecomendadas);
   document.getElementById('btn-vincular-admin-auth').addEventListener('click', vincularAdminFirebaseAuth);
